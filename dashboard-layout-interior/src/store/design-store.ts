@@ -99,6 +99,9 @@ function patchFloor(
 let lastSynced = "";
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let initPromise: Promise<void> | null = null;
+/** waktu ubah proyek di server yang terakhir diketahui (deteksi perubahan dari AI / klien lain) */
+let knownUpdatedAt = 0;
+let watchTimer: ReturnType<typeof setInterval> | null = null;
 const LAST_PROJECT_KEY = "layout-interior-last-project";
 
 export const useDesignStore = create<DesignState>()((set, get) => ({
@@ -140,6 +143,7 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
         set({ projects: await api.listProjects() });
         await get().openProject(target);
         set({ hydrated: true });
+        startWatch();
       } catch (e) {
         set({ serverError: (e as Error).message, hydrated: true });
       } finally {
@@ -161,6 +165,7 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
     try {
       const p = await api.getProject(id);
       lastSynced = JSON.stringify({ name: p.name, floors: p.floors });
+      knownUpdatedAt = (p as Project & { updatedAt?: number }).updatedAt ?? 0;
       set({
         project: p,
         projectId: p.id ?? id,
@@ -362,7 +367,8 @@ async function flushSave() {
   }
   useDesignStore.setState({ saveState: "saving", saveError: null });
   try {
-    await api.saveProject(s.projectId, s.project);
+    const saved = await api.saveProject(s.projectId, s.project);
+    knownUpdatedAt = (saved as Project & { updatedAt?: number }).updatedAt ?? knownUpdatedAt;
     lastSynced = snapshot;
     // perubahan lain mungkin terjadi selama menyimpan
     const now = useDesignStore.getState();
@@ -373,6 +379,39 @@ async function flushSave() {
   } catch (e) {
     useDesignStore.setState({ saveState: "error", saveError: (e as Error).message });
   }
+}
+
+/** Setiap 5 detik cek apakah proyek diubah dari luar (mis. oleh AI lewat MCP/API); bila ya dan tidak ada
+ *  perubahan lokal yang belum tersimpan, muat ulang tanpa mengganti lantai/perangkat yang sedang dipilih. */
+function startWatch() {
+  if (watchTimer) return;
+  watchTimer = setInterval(async () => {
+    const s = useDesignStore.getState();
+    if (!s.projectId || s.loading || s.saveState === "dirty" || s.saveState === "saving" || document.hidden) return;
+    try {
+      const list = await api.listProjects();
+      const me = list.find((p) => p.id === s.projectId);
+      if (list.length !== s.projects.length || list.some((p, i) => p.id !== s.projects[i]?.id || p.updated_at !== s.projects[i]?.updated_at)) {
+        useDesignStore.setState({ projects: list });
+      }
+      if (!me) return;
+      if (me.updated_at > knownUpdatedAt + 0.001) {
+        const p = await api.getProject(s.projectId);
+        knownUpdatedAt = (p as Project & { updatedAt?: number }).updatedAt ?? me.updated_at;
+        lastSynced = JSON.stringify({ name: p.name, floors: p.floors });
+        const cur = useDesignStore.getState();
+        const activeOk = p.floors.some((f) => f.id === cur.activeFloorId);
+        useDesignStore.setState({
+          project: p,
+          activeFloorId: activeOk ? cur.activeFloorId : (p.floors[0]?.id ?? null),
+          selectedId: p.floors.some((f) => f.devices.some((d) => d.id === cur.selectedId)) ? cur.selectedId : null,
+          saveState: "saved",
+        });
+      }
+    } catch {
+      /* backend sementara tidak terjangkau: coba lagi pada interval berikutnya */
+    }
+  }, 5000);
 }
 
 function scheduleSave() {

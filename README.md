@@ -20,6 +20,13 @@ cd backend && python server.py          # http://localhost:8800  (pip install py
 cd dashboard-layout-interior && npm install && npm run dev   # http://localhost:3000
 ```
 
+## Integrasi AI / LLM
+
+Aplikasi menyediakan **server MCP** (stdio `backend/mcp_server.py` atau HTTP `POST /mcp`) dan **REST AI tools**
+(`/api/ai/schema`, `POST /api/ai/tools/{nama}`) sehingga Claude Desktop/Claude Code/Cursor atau agen lain dapat
+menambah lantai, menempatkan perangkat, menghitung estimasi kabel, dan membuat PDF. Klik tombol **AI** di topbar
+aplikasi untuk konfigurasi siap salin. Detail di `backend/README.md`.
+
 ## Deploy dengan Docker
 
 Perlu Docker Engine + Docker Compose v2.

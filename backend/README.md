@@ -30,6 +30,37 @@ Atau klik dua kali `Jalankan Backend.bat`. Untuk menjalankan backend + frontend 
 `kind`: `all`, `cctv`, `sk` (stop kontak), `lan`, `wifi`, `modem`. `floorIds` membatasi lantai; `tss` (default true)
 menyertakan halaman Technical Site Survey; `project` opsional (state terbaru dari frontend, disimpan sekaligus).
 
+## Integrasi AI / LLM (MCP & API)
+
+AI dari luar dapat membaca dan mengubah proyek lewat dua jalur yang memakai registry tool yang sama (`ai_tools.py`):
+
+**MCP (Model Context Protocol)** - `mcp_server.py`, tanpa pustaka tambahan.
+
+- stdio: `python backend/mcp_server.py` - untuk Claude Desktop (`claude_desktop_config.json`), Claude Code
+  (`claude mcp add layout-interior -- python "<path>/backend/mcp_server.py"`), Cursor, dll.
+- HTTP (Streamable HTTP, stateless): `POST http://localhost:8800/mcp` - untuk klien MCP berbasis URL
+  (`claude mcp add --transport http layout-interior http://localhost:8800/mcp`).
+- Method: `initialize`, `tools/list`, `tools/call`, `ping`. Snippet konfigurasi siap salin ada di aplikasi
+  (tombol **AI** di topbar) atau `GET /api/ai/info`.
+
+**REST untuk agen / function calling** (OpenAI, n8n, skrip):
+
+| Metode | Path | Keterangan |
+|---|---|---|
+| GET | `/api/ai/info` | cara sambung + daftar tool |
+| GET | `/api/ai/schema` | JSON Schema tool dan format `openai_functions` |
+| POST | `/api/ai/tools/{nama}` | panggil tool dengan argumen JSON → `{ok, result}` |
+| GET | `/exports/{file}` | unduh PDF hasil tool `export_pdf` |
+
+Tool: `list_projects`, `get_project`, `get_project_summary`, `create_project`, `rename_project`, `delete_project`,
+`add_floor` (gambar dari path/URL/data URL/`sample`), `update_floor`, `delete_floor`, `list_devices`, `add_device`,
+`update_device`, `move_device`, `delete_device`, `add_wall`, `get_cable_estimate`, `export_pdf`.
+Posisi dalam meter (`x_m`, `y_m`) dari sudut kiri-atas gambar, atau piksel (`x_px`, `y_px`).
+Frontend memantau perubahan dari server tiap 5 detik, jadi hasil kerja AI langsung tampil.
+
+Keamanan: default tanpa auth. Bila backend diakses dari luar, set variabel lingkungan `API_KEY`; klien wajib
+mengirim header `X-API-Key: <kunci>` (atau `Authorization: Bearer <kunci>`) untuk `/api/*` dan `/mcp`.
+
 ## Skema SQLite
 
 `projects` → `floors` (ord, name, image_url, image_width/height, px_per_meter) → `devices` (type, x, y, rotation,

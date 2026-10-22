@@ -12,6 +12,12 @@ API (JSON):
   GET    /uploads/{file}                    file gambar denah
   POST   /api/projects/{id}/export {kind: all|cctv|sk|lan|modem|wifi, floorIds?: [], tss?: bool} -> PDF
   GET    /api/projects/{id}/export?kind=..&floors=id1,id2&tss=1 -> PDF
+  --- integrasi AI / LLM ---
+  GET    /api/ai/info                       cara sambung (MCP stdio/HTTP, REST), daftar tool
+  GET    /api/ai/schema                     JSON Schema tool + format function calling OpenAI
+  POST   /api/ai/tools/{name}  {args}       panggil tool (lihat ai_tools.py)
+  POST   /mcp                               MCP Streamable HTTP (JSON-RPC 2.0); stdio: python mcp_server.py
+  GET    /exports/{file}                    PDF hasil tool export_pdf
 Hanya memakai pustaka standar Python + PyMuPDF.
 """
 import base64
@@ -32,11 +38,15 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import db  # noqa: E402
 import pdf_report  # noqa: E402
+import ai_tools  # noqa: E402
+import mcp_server  # noqa: E402
 
 UPLOAD_DIR = pdf_report.UPLOAD_DIR
 PORT = int(os.environ.get("PORT", "8800"))
 HOST = os.environ.get("HOST", "127.0.0.1")   # Docker: HOST=0.0.0.0
 MAX_BODY = 60 * 1024 * 1024
+API_KEY = os.environ.get("API_KEY", "")   # opsional: bila diisi, /api/* dan /mcp wajib header X-API-Key / Bearer
+MCP_PATH = os.path.join(HERE, "mcp_server.py")
 MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".svg": "image/svg+xml", ".gif": "image/gif"}
 
 
@@ -96,7 +106,7 @@ class Handler(BaseHTTPRequestHandler):
     def _cors(self):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-API-Key, Authorization, MCP-Protocol-Version, Mcp-Session-Id")
         self.send_header("Access-Control-Expose-Headers", "Content-Disposition")
 
     def _json(self, obj, status=HTTPStatus.OK):
@@ -143,9 +153,56 @@ class Handler(BaseHTTPRequestHandler):
         self._cors()
         self.end_headers()
 
+    def _authorized(self, path):
+        if not API_KEY or path in ("/", "/api", "/api/health") or path.startswith("/uploads/") or path.startswith("/exports/"):
+            return True
+        key = self.headers.get("X-API-Key") or ""
+        auth = self.headers.get("Authorization") or ""
+        if auth.lower().startswith("bearer "):
+            key = key or auth[7:].strip()
+        return key == API_KEY
+
+    def _ai_info(self):
+        base = f"http://localhost:{PORT}"
+        return {
+            "name": mcp_server.SERVER_INFO["name"],
+            "mcp": {
+                "http_url": f"{base}/mcp",
+                "stdio_command": "python",
+                "stdio_args": [MCP_PATH],
+                "claude_desktop_config": {"mcpServers": {"layout-interior": {"command": "python", "args": [MCP_PATH]}}},
+                "claude_code_stdio": f'claude mcp add layout-interior -- python "{MCP_PATH}"',
+                "claude_code_http": f"claude mcp add --transport http layout-interior {base}/mcp",
+                "cursor_config": {"mcpServers": {"layout-interior": {"url": f"{base}/mcp"}}},
+            },
+            "rest": {
+                "schema_url": f"{base}/api/ai/schema",
+                "call_url": f"{base}/api/ai/tools/{{tool_name}}",
+                "example": {"method": "POST", "url": f"{base}/api/ai/tools/add_device",
+                            "body": {"project_id": "<id>", "floor_id": "Lantai 1", "type": "bullet", "x_m": 3.2, "y_m": 1.5, "rotation": 135}},
+            },
+            "auth": "X-API-Key" if API_KEY else "tanpa auth",
+            "tools": [{"name": t["name"], "description": t["description"]} for t in ai_tools.tool_specs()],
+        }
+
     def do_GET(self):
         path, q = self._route()
+        if not self._authorized(path):
+            return self._json({"error": "API key tidak valid"}, HTTPStatus.UNAUTHORIZED)
         try:
+            if path == "/api/ai/info":
+                return self._json(self._ai_info())
+            if path == "/api/ai/schema":
+                return self._json({"tools": ai_tools.tool_specs(), "openai_functions": ai_tools.openai_functions()})
+            if path == "/mcp":
+                return self._json({"mcp": "POST JSON-RPC 2.0 ke endpoint ini (Streamable HTTP, stateless)", "stdio": MCP_PATH})
+            m = re.fullmatch(r"/exports/([A-Za-z0-9_.-]+)", path)
+            if m:
+                fp = os.path.join(ai_tools.EXPORT_DIR, m.group(1))
+                if not os.path.isfile(fp):
+                    return self._json({"error": "file tidak ditemukan"}, HTTPStatus.NOT_FOUND)
+                with open(fp, "rb") as fh:
+                    return self._bytes(fh.read(), "application/pdf", m.group(1))
             if path == "/" or path == "/api":
                 return self._json({"app": "Dashboard Layout Interior backend", "docs": __doc__.strip().splitlines()[2:14]})
             if path == "/api/health":
@@ -175,8 +232,25 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path, _ = self._route()
+        if not self._authorized(path):
+            return self._json({"error": "API key tidak valid"}, HTTPStatus.UNAUTHORIZED)
         try:
             body = self._body()
+            if path == "/mcp":
+                resp = mcp_server.handle_payload(body)
+                if resp is None:                      # notifikasi: tanpa isi
+                    self.send_response(HTTPStatus.ACCEPTED)
+                    self._cors()
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                return self._json(resp)
+            m = re.fullmatch(r"/api/ai/tools/([A-Za-z0-9_]+)", path)
+            if m:
+                try:
+                    return self._json({"ok": True, "result": ai_tools.call_tool(m.group(1), body)})
+                except ai_tools.ToolError as e:
+                    return self._json({"ok": False, "error": str(e)}, HTTPStatus.BAD_REQUEST)
             if path == "/api/projects":
                 return self._json(db.create_project((body.get("name") or "Proyek baru").strip() or "Proyek baru"), HTTPStatus.CREATED)
             if path == "/api/projects/import":
@@ -248,6 +322,8 @@ def main():
     print(" Backend Dashboard Layout Interior - PT Citius (SQLite, tanpa auth)")
     print(f" API      : {url}api  (bind {HOST}:{PORT})")
     print(f" Database : {db.DB_PATH}")
+    print(f" MCP      : {url}mcp  (HTTP)  |  stdio: python {MCP_PATH}")
+    print(f" AI tools : {url}api/ai/schema  ->  POST {url}api/ai/tools/<nama>")
     print(" Frontend : jalankan `npm run dev` di dashboard-layout-interior (http://localhost:3000)")
     print(" Tekan Ctrl+C untuk berhenti.")
     print("=" * 64)

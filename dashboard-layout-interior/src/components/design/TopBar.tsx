@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import {
   ArrowLeft,
+  Bot,
   Check,
   ChevronDown,
   CloudOff,
@@ -39,6 +40,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useDesignStore } from "@/store/design-store";
 import { ExportMenu } from "./ExportMenu";
+import { AiIntegrationDialog } from "./AiIntegrationDialog";
 import type { Project } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -58,6 +60,7 @@ export function TopBar({ onAddFloor }: { onAddFloor: () => void }) {
   const saveNow = useDesignStore((s) => s.saveNow);
   const [renameOpen, setRenameOpen] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
+  const [aiOpen, setAiOpen] = useState(false);
   const [draft, setDraft] = useState(name);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -142,6 +145,9 @@ export function TopBar({ onAddFloor }: { onAddFloor: () => void }) {
             <DropdownMenuItem onClick={() => void saveNow()}>
               <Save /> Simpan sekarang
             </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setAiOpen(true)}>
+              <Bot /> Integrasi AI / MCP
+            </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem
               variant="destructive"
@@ -181,6 +187,9 @@ export function TopBar({ onAddFloor }: { onAddFloor: () => void }) {
       </div>
 
       <div className="ml-auto flex items-center gap-2">
+        <Button variant="ghost" size="sm" onClick={() => setAiOpen(true)} title="Hubungkan AI / LLM lewat MCP atau API">
+          <Bot /> AI
+        </Button>
         {floors.length > 0 && (
           <>
             <ExportMenu
@@ -196,6 +205,8 @@ export function TopBar({ onAddFloor }: { onAddFloor: () => void }) {
           </>
         )}
       </div>
+
+      <AiIntegrationDialog open={aiOpen} onOpenChange={setAiOpen} />
 
       <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
         <DialogContent>
