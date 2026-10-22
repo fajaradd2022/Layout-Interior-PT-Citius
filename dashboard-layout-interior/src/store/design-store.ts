@@ -2,6 +2,7 @@
 
 import { create } from "zustand";
 import type {
+  Cable,
   Device,
   DeviceType,
   Floor,
@@ -28,6 +29,8 @@ interface DesignState {
   projects: ProjectSummary[];
   activeFloorId: string | null;
   selectedId: string | null;
+  /** kabel yang dipilih (eksklusif dengan selectedId) */
+  selectedCableId: string | null;
   tool: Tool;
   /** titik-titik sementara saat menggambar dinding / mengukur / kalibrasi */
   pending: Point[];
@@ -50,7 +53,7 @@ interface DesignState {
   importProject: (p: Project) => Promise<void>;
 
   // floors
-  addFloor: (f: Omit<Floor, "id" | "devices" | "walls" | "measurements">) => string;
+  addFloor: (f: Omit<Floor, "id" | "devices" | "walls" | "measurements" | "cables">) => string;
   updateFloor: (id: string, patch: Partial<Floor>) => void;
   removeFloor: (id: string) => void;
   setActiveFloor: (id: string) => void;
@@ -70,6 +73,11 @@ interface DesignState {
   addWall: (w: Wall) => void;
   removeWall: (id: string) => void;
   clearWalls: () => void;
+  addCable: (c: Cable) => void;
+  updateCable: (id: string, patch: Partial<Cable>) => void;
+  removeCable: (id: string) => void;
+  clearCables: () => void;
+  selectCable: (id: string | null) => void;
   addMeasurement: (m: Measurement) => void;
   removeMeasurement: (id: string) => void;
   clearMeasurements: () => void;
@@ -113,6 +121,7 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
   projects: [],
   activeFloorId: null,
   selectedId: null,
+  selectedCableId: null,
   tool: { kind: "select" },
   pending: [],
   calibrateRequest: null,
@@ -175,6 +184,7 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
         projectId: p.id ?? id,
         activeFloorId: p.floors[0]?.id ?? null,
         selectedId: null,
+        selectedCableId: null,
         tool: { kind: "select" },
         pending: [],
         saveState: "saved",
@@ -237,7 +247,7 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
         ...s.project,
         floors: [
           ...s.project.floors,
-          { ...f, id, devices: [], walls: [], measurements: [] },
+          { ...f, id, devices: [], walls: [], measurements: [], cables: [] },
         ],
       },
       activeFloorId: id,
@@ -271,7 +281,7 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
     set((st) =>
       patchFloor(st, fid, (f) => ({ ...f, devices: [...f.devices, d] })),
     );
-    set({ selectedId: d.id });
+    set({ selectedId: d.id, selectedCableId: null });
     return d.id;
   },
   updateDevice: (id, patch) => {
@@ -294,6 +304,8 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
       ...patchFloor(s, fid, (f) => ({
         ...f,
         devices: f.devices.filter((d) => d.id !== id),
+        // lepaskan referensi kabel ke perangkat yang dihapus
+        cables: (f.cables ?? []).map((c) => (c.fromId === id || c.toId === id ? { ...c, fromId: c.fromId === id ? null : c.fromId, toId: c.toId === id ? null : c.toId } : c)),
       })),
       selectedId: s.selectedId === id ? null : s.selectedId,
     }));
@@ -311,10 +323,35 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
     );
     set({ selectedId: copy.id });
   },
-  select: (id) => set({ selectedId: id }),
+  select: (id) => set({ selectedId: id, selectedCableId: id ? null : get().selectedCableId }),
+  selectCable: (id) => set({ selectedCableId: id, selectedId: id ? null : get().selectedId }),
+  addCable: (c) => {
+    const fid = get().activeFloorId;
+    if (!fid) return;
+    set((s) => patchFloor(s, fid, (f) => ({ ...f, cables: [...(f.cables ?? []), c] })));
+    set({ selectedCableId: c.id, selectedId: null });
+  },
+  updateCable: (id, patch) => {
+    const fid = get().activeFloorId;
+    if (!fid) return;
+    set((s) => patchFloor(s, fid, (f) => ({ ...f, cables: (f.cables ?? []).map((c) => (c.id === id ? { ...c, ...patch } : c)) })));
+  },
+  removeCable: (id) => {
+    const fid = get().activeFloorId;
+    if (!fid) return;
+    set((s) => ({
+      ...patchFloor(s, fid, (f) => ({ ...f, cables: (f.cables ?? []).filter((c) => c.id !== id) })),
+      selectedCableId: s.selectedCableId === id ? null : s.selectedCableId,
+    }));
+  },
+  clearCables: () => {
+    const fid = get().activeFloorId;
+    if (!fid) return;
+    set((s) => ({ ...patchFloor(s, fid, (f) => ({ ...f, cables: [] })), selectedCableId: null }));
+  },
 
   // ---------------------------------------------------------------- tools
-  setTool: (t) => set({ tool: t, pending: [], selectedId: t.kind === "select" ? get().selectedId : null }),
+  setTool: (t) => set({ tool: t, pending: [], selectedId: t.kind === "select" ? get().selectedId : null, selectedCableId: t.kind === "select" ? get().selectedCableId : null }),
   pushPending: (p) => set((s) => ({ pending: [...s.pending, p] })),
   clearPending: () => set({ pending: [] }),
   addWall: (w) => {
@@ -451,6 +488,13 @@ export function useActiveFloor(): Floor | null {
   return useDesignStore((s) =>
     s.project.floors.find((f) => f.id === s.activeFloorId) ?? null,
   );
+}
+
+export function useSelectedCable(): Cable | null {
+  return useDesignStore((s) => {
+    const f = s.project.floors.find((fl) => fl.id === s.activeFloorId);
+    return f?.cables?.find((c) => c.id === s.selectedCableId) ?? null;
+  });
 }
 
 export function useSelectedDevice(): Device | null {

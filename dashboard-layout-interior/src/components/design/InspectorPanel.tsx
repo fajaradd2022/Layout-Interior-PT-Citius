@@ -10,10 +10,11 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
-import { useActiveFloor, useDesignStore, useSelectedDevice } from "@/store/design-store";
-import { DEVICE_META, DEVICE_ORDER, LENS_PRESETS, describeDevice, isCamera } from "@/lib/devices";
-import type { Device } from "@/lib/types";
-import { formatMeters } from "@/lib/geometry";
+import { useActiveFloor, useDesignStore, useSelectedCable, useSelectedDevice } from "@/store/design-store";
+import { CABLE_META, CABLE_ORDER, DEVICE_META, DEVICE_ORDER, LENS_PRESETS, describeDevice, isCamera } from "@/lib/devices";
+import type { CableType, Device } from "@/lib/types";
+import { formatMeters, polylineLength } from "@/lib/geometry";
+import { Cable as CableIcon } from "lucide-react";
 import { AddFloorPlanDialog } from "./AddFloorPlanDialog";
 import { cn } from "@/lib/utils";
 
@@ -123,8 +124,68 @@ export function InspectorPanel() {
   );
 }
 
+function CableProps() {
+  const cable = useSelectedCable();
+  const floor = useActiveFloor();
+  const update = useDesignStore((s) => s.updateCable);
+  const remove = useDesignStore((s) => s.removeCable);
+  if (!cable || !floor) return null;
+  const meta = CABLE_META[cable.type];
+  const ppm = floor.pxPerMeter;
+  const routePx = polylineLength(cable.points);
+  const routeM = ppm ? routePx / ppm : null;
+  const devOpts = [{ value: "", label: "- tidak ada -" }, ...floor.devices.filter((d) => d.type !== "chair" && d.type !== "desk").map((d) => ({ value: d.id, label: `${d.label} (${DEVICE_META[d.type].shortLabel})` }))];
+  const set = (patch: Parameters<typeof update>[1]) => update(cable.id, patch);
+  return (
+    <div className="grid gap-4 p-4">
+      <div className="flex items-center gap-3">
+        <span className="flex size-9 items-center justify-center rounded-full text-white" style={{ background: meta.color }}>
+          <CableIcon className="size-4" />
+        </span>
+        <div className="min-w-0">
+          <h3 className="truncate text-sm font-semibold">{cable.label}</h3>
+          <p className="text-xs text-muted-foreground">{meta.label} - {meta.spec}</p>
+        </div>
+      </div>
+      <Separator />
+      <Field label="Label">
+        <Input value={cable.label} onChange={(e) => set({ label: e.target.value })} />
+      </Field>
+      <SelectField label="Jenis kabel" value={cable.type} options={CABLE_ORDER.map((t) => ({ value: t, label: `${CABLE_META[t].label} - ${CABLE_META[t].spec}` }))} onChange={(v) => set({ type: v as CableType })} />
+      <div className="grid grid-cols-2 gap-3">
+        <SelectField label="Dari perangkat" value={cable.fromId ?? ""} options={devOpts} onChange={(v) => set({ fromId: v || null })} />
+        <SelectField label="Ke perangkat" value={cable.toId ?? ""} options={devOpts} onChange={(v) => set({ toId: v || null })} />
+      </div>
+      <div className="grid grid-cols-3 gap-2 text-center text-xs">
+        <Stat label="Titik" value={cable.points.length} />
+        <StatText label="Jalur" value={routeM !== null ? formatMeters(routeM) : `${Math.round(routePx)} px`} />
+        <StatText label="Total" value={routeM !== null ? formatMeters(routeM + cable.extraM) : "-"} />
+      </div>
+      <NumberField label="Tambahan panjang (drop vertikal / cadangan)" value={cable.extraM} min={0} max={100} step={0.5} suffix="m" onChange={(v) => set({ extraM: v })} />
+      {!ppm && <p className="text-[11px] text-amber-600">Kalibrasi skala denah agar panjang jalur dihitung dalam meter.</p>}
+      <Field label="Catatan">
+        <Textarea rows={2} value={cable.note} onChange={(e) => set({ note: e.target.value })} placeholder="mis. lewat tray plafon koridor, conduit 20 mm" />
+      </Field>
+      <Separator />
+      <Button variant="destructive" onClick={() => remove(cable.id)}>
+        <Trash2 /> Hapus jalur kabel
+      </Button>
+    </div>
+  );
+}
+
+function StatText({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg bg-muted px-2 py-2">
+      <div className="text-sm font-semibold">{value}</div>
+      <div className="text-muted-foreground">{label}</div>
+    </div>
+  );
+}
+
 function DeviceProps() {
   const device = useSelectedDevice();
+  const cable = useSelectedCable();
   const floor = useActiveFloor();
   const update = useDesignStore((s) => s.updateDevice);
   const remove = useDesignStore((s) => s.removeDevice);
@@ -134,6 +195,7 @@ function DeviceProps() {
   const [replaceOpen, setReplaceOpen] = useState(false);
 
   if (!floor) return null;
+  if (!device && cable) return <CableProps />;
 
   if (!device) {
     return (
@@ -178,8 +240,9 @@ function DeviceProps() {
           </Button>
         </Field>
         <Separator />
-        <div className="grid grid-cols-3 gap-2 text-center text-xs">
+        <div className="grid grid-cols-4 gap-2 text-center text-xs">
           <Stat label="Perangkat" value={floor.devices.length} />
+          <Stat label="Kabel" value={floor.cables?.length ?? 0} />
           <Stat label="Dinding" value={floor.walls.length} />
           <Stat label="Ukuran" value={floor.measurements.length} />
         </div>
@@ -475,10 +538,18 @@ function Stat({ label, value }: { label: string; value: number }) {
 function DeviceList() {
   const floor = useActiveFloor();
   const selectedId = useDesignStore((s) => s.selectedId);
+  const selectedCableId = useDesignStore((s) => s.selectedCableId);
   const select = useDesignStore((s) => s.select);
+  const selectCable = useDesignStore((s) => s.selectCable);
   const setTool = useDesignStore((s) => s.setTool);
   if (!floor) return null;
   const ppm = floor.pxPerMeter;
+  const cables = floor.cables ?? [];
+  const cableLen = (c: (typeof cables)[number]) => (ppm ? polylineLength(c.points) / ppm + c.extraM : null);
+  const cableTotals = CABLE_ORDER.map((t) => {
+    const cs = cables.filter((c) => c.type === t);
+    return { t, n: cs.length, m: cs.reduce((a, c) => a + (cableLen(c) ?? 0), 0) };
+  }).filter((x) => x.n > 0);
   const counts = DEVICE_ORDER.map((t) => ({ t, n: floor.devices.filter((d) => d.type === t).length })).filter((c) => c.n > 0);
 
   return (
@@ -533,6 +604,56 @@ function DeviceList() {
           );
         })}
       </div>
+
+      {cables.length > 0 && (
+        <>
+          <Separator />
+          <p className="text-xs font-medium">Jalur kabel ({cables.length})</p>
+          <div className="grid grid-cols-2 gap-1.5">
+            {cableTotals.map(({ t, n, m }) => (
+              <div key={t} className="flex items-center gap-2 rounded-lg border px-2 py-1.5 text-xs">
+                <span className="size-3 shrink-0 rounded-full" style={{ background: CABLE_META[t].color }} />
+                <span className="flex-1 truncate">{CABLE_META[t].short}</span>
+                <span className="font-semibold">{n}</span>
+                <span className="text-muted-foreground">{ppm ? formatMeters(m) : "-"}</span>
+              </div>
+            ))}
+          </div>
+          <div className="grid gap-1">
+            {cables.map((c) => {
+              const from = floor.devices.find((d) => d.id === c.fromId)?.label;
+              const to = floor.devices.find((d) => d.id === c.toId)?.label;
+              const len = cableLen(c);
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => {
+                    setTool({ kind: "select" });
+                    selectCable(c.id);
+                  }}
+                  className={cn(
+                    "flex items-center gap-2 rounded-md border px-2 py-1.5 text-left text-xs transition-colors hover:bg-muted",
+                    c.id === selectedCableId && "border-primary bg-accent",
+                  )}
+                >
+                  <span className="flex size-6 shrink-0 items-center justify-center rounded-full text-white" style={{ background: CABLE_META[c.type].color }}>
+                    <CableIcon className="size-3" />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-medium">{c.label}</span>
+                    <span className="block truncate text-muted-foreground">
+                      {CABLE_META[c.type].short}
+                      {from || to ? ` · ${from ?? "?"} → ${to ?? "?"}` : ""}
+                    </span>
+                  </span>
+                  <span className="shrink-0 font-mono text-[10px] text-muted-foreground">{len !== null ? formatMeters(len) : `${Math.round(polylineLength(c.points))} px`}</span>
+                </button>
+              );
+            })}
+          </div>
+        </>
+      )}
     </div>
   );
 }

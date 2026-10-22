@@ -1,8 +1,8 @@
 import { toPng } from "html-to-image";
 import { jsPDF } from "jspdf";
 import type { Floor, Project } from "./types";
-import { DEVICE_META, DEVICE_ORDER, describeDevice } from "./devices";
-import { formatMeters } from "./geometry";
+import { CABLE_META, CABLE_ORDER, DEVICE_META, DEVICE_ORDER, describeDevice } from "./devices";
+import { formatMeters, polylineLength } from "./geometry";
 
 export async function captureNode(node: HTMLElement, width: number, height: number): Promise<string> {
   return toPng(node, {
@@ -146,6 +146,21 @@ export async function exportPdfReport(
     if (!n) continue;
     pdf.text(`${DEVICE_META[t].label}: ${n}`, margin, y);
     y += 5.5;
+  }
+  const cables = floor.cables ?? [];
+  if (cables.length) {
+    y += 4;
+    pdf.setFont("helvetica", "bold");
+    pdf.text("Jalur kabel", margin, y);
+    pdf.setFont("helvetica", "normal");
+    y += 6;
+    for (const t of CABLE_ORDER) {
+      const cs = cables.filter((c) => c.type === t);
+      if (!cs.length) continue;
+      const total = floor.pxPerMeter ? cs.reduce((a, c) => a + polylineLength(c.points) / floor.pxPerMeter! + c.extraM, 0) : null;
+      pdf.text(`${CABLE_META[t].label}: ${cs.length} jalur${total !== null ? `, total ${formatMeters(total)}` : ""}`, margin, y);
+      y += 5.5;
+    }
   }
 
   pdf.save(`${safeName(project.name)}-${safeName(floor.name)}.pdf`);

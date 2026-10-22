@@ -4,6 +4,12 @@ export function dist(a: Point, b: Point): number {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
+export function polylineLength(pts: Point[]): number {
+  let total = 0;
+  for (let i = 1; i < pts.length; i++) total += dist(pts[i - 1], pts[i]);
+  return total;
+}
+
 export function pxToMeters(px: number, pxPerMeter: number | null): number | null {
   if (!pxPerMeter) return null;
   return px / pxPerMeter;

@@ -4,9 +4,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Minus, Plus, Maximize2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useActiveFloor, useDesignStore } from "@/store/design-store";
-import type { Device, DeviceType, Point } from "@/lib/types";
-import { DEVICE_META, isCamera, uid } from "@/lib/devices";
-import { clamp, dist, FALLBACK_PX_PER_METER, formatMeters, fovPolygons, toPointsAttr } from "@/lib/geometry";
+import type { Cable, Device, DeviceType, Point } from "@/lib/types";
+import { CABLE_META, createCable, DEVICE_META, isCamera, uid } from "@/lib/devices";
+import { clamp, dist, FALLBACK_PX_PER_METER, formatMeters, fovPolygons, polylineLength, toPointsAttr } from "@/lib/geometry";
 import { captureNode } from "@/lib/export";
 import { canvasExporter } from "@/lib/canvas-exporter";
 import { cn } from "@/lib/utils";
@@ -36,6 +36,12 @@ export function Canvas() {
   const setCalibrateRequest = useDesignStore((s) => s.setCalibrateRequest);
   const removeWall = useDesignStore((s) => s.removeWall);
   const removeMeasurement = useDesignStore((s) => s.removeMeasurement);
+  const selectedCableId = useDesignStore((s) => s.selectedCableId);
+  const selectCable = useDesignStore((s) => s.selectCable);
+  const addCable = useDesignStore((s) => s.addCable);
+  const removeCable = useDesignStore((s) => s.removeCable);
+  /** perangkat ujung awal/akhir kabel yang sedang digambar */
+  const cableEndsRef = useRef<{ fromId: string | null; toId: string | null }>({ fromId: null, toId: null });
   const showSizes = useDesignStore((s) => s.showSizes);
   const highlightId = useDesignStore((s) => s.highlightId);
 
@@ -89,6 +95,35 @@ export function Canvas() {
     [],
   );
 
+  /** perangkat terdekat dari titik (piksel gambar) dalam radius snap; untuk kabel */
+  const snapDevice = useCallback(
+    (p: Point): Device | null => {
+      if (!floor) return null;
+      const r = 16 / zoom;
+      let best: Device | null = null;
+      let bd = r;
+      for (const d of floor.devices) {
+        if (d.type === "chair" || d.type === "desk") continue;
+        const dd = dist(p, d);
+        if (dd < bd) {
+          bd = dd;
+          best = d;
+        }
+      }
+      return best;
+    },
+    [floor, zoom],
+  );
+
+  const finishCable = useCallback(() => {
+    if (tool.kind !== "cable" || pending.length < 2 || !floor) return;
+    const idx = (floor.cables?.length ?? 0) + 1;
+    const ends = cableEndsRef.current;
+    addCable(createCable(tool.cableType, pending, idx, ends.fromId, ends.toId));
+    cableEndsRef.current = { fromId: null, toId: null };
+    clearPending();
+  }, [tool, pending, floor, addCable, clearPending]);
+
   // fit saat lantai berganti
   useEffect(() => {
     fit();
@@ -115,13 +150,19 @@ export function Canvas() {
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
       if (e.key === "Escape") {
         clearPending();
+        cableEndsRef.current = { fromId: null, toId: null };
         setTool({ kind: "select" });
         select(null);
+        selectCable(null);
       } else if ((e.key === "Delete" || e.key === "Backspace") && selectedId) {
         removeDevice(selectedId);
+      } else if ((e.key === "Delete" || e.key === "Backspace") && selectedCableId) {
+        removeCable(selectedCableId);
       } else if (e.key === "Enter" && tool.kind === "wall" && pending.length >= 2) {
         addWall({ id: uid(), points: pending });
         clearPending();
+      } else if (e.key === "Enter" && tool.kind === "cable") {
+        finishCable();
       } else if (!e.ctrlKey && !e.metaKey) {
         const k = e.key.toLowerCase();
         if (k === "v") setTool({ kind: "select" });
@@ -129,11 +170,12 @@ export function Canvas() {
         else if (k === "w") setTool({ kind: "wall" });
         else if (k === "m") setTool({ kind: "measure" });
         else if (k === "k") setTool({ kind: "calibrate" });
+        else if (k === "c") setTool({ kind: "cable", cableType: tool.kind === "cable" ? tool.cableType : "data" });
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selectedId, tool, pending, addWall, clearPending, setTool, select, removeDevice]);
+  }, [selectedId, selectedCableId, tool, pending, addWall, clearPending, setTool, select, selectCable, removeDevice, removeCable, finishCable]);
 
   // exporter
   useEffect(() => {
@@ -185,6 +227,22 @@ export function Canvas() {
           setTool({ kind: "select" });
         } else pushPending(p);
         break;
+      case "cable": {
+        const dev = snapDevice(p);
+        const pt = dev ? { x: dev.x, y: dev.y } : p;
+        if (pending.length === 0) {
+          cableEndsRef.current = { fromId: dev?.id ?? null, toId: null };
+          pushPending(pt);
+        } else if (dev && dev.id !== cableEndsRef.current.fromId) {
+          // berakhir di perangkat: selesaikan kabel
+          cableEndsRef.current.toId = dev.id;
+          const idx = (floor?.cables?.length ?? 0) + 1;
+          addCable(createCable(tool.cableType, [...pending, pt], idx, cableEndsRef.current.fromId, dev.id));
+          cableEndsRef.current = { fromId: null, toId: null };
+          clearPending();
+        } else pushPending(pt);
+        break;
+      }
     }
   };
 
@@ -227,6 +285,8 @@ export function Canvas() {
     if (tool.kind === "wall" && pending.length >= 2) {
       addWall({ id: uid(), points: pending });
       clearPending();
+    } else if (tool.kind === "cable") {
+      finishCable();
     }
   };
 
@@ -254,6 +314,8 @@ export function Canvas() {
         return "Klik dua titik untuk mengukur jarak.";
       case "calibrate":
         return "Klik dua titik yang jaraknya diketahui (mis. lebar ruangan), lalu isi jarak sebenarnya.";
+      case "cable":
+        return `Gambar jalur ${CABLE_META[tool.cableType].label.toLowerCase()}: klik perangkat awal (mis. switch / panel), klik belokan jalur, klik perangkat tujuan untuk selesai. Klik ganda / Enter = selesai tanpa perangkat tujuan, Esc = batal.`;
     }
   }, [tool]);
 
@@ -270,6 +332,8 @@ export function Canvas() {
 
   const wallWidth = Math.max(4, 0.15 * ppmEff);
   const uiScale = 1 / effZoom;
+  const snapTarget = tool.kind === "cable" && cursor ? snapDevice(cursor) : null;
+  const cables = floor.cables ?? [];
 
   return (
     <div
@@ -486,6 +550,35 @@ export function Canvas() {
               );
             })}
 
+          {/* jalur kabel */}
+          {cables.map((c) => (
+            <CableLine
+              key={c.id}
+              cable={c}
+              uiScale={uiScale}
+              ppm={ppm}
+              selected={c.id === selectedCableId && !exporting}
+              highlighted={c.id === highlightId}
+              interactive={tool.kind === "select" && !exporting}
+              onSelect={() => selectCable(c.id)}
+            />
+          ))}
+          {tool.kind === "cable" && pending.length > 0 && (
+            <polyline
+              points={[...pending, ...(snapTarget ? [{ x: snapTarget.x, y: snapTarget.y }] : cursor ? [cursor] : [])].map((p) => `${p.x},${p.y}`).join(" ")}
+              fill="none"
+              stroke={CABLE_META[tool.cableType].color}
+              strokeWidth={3 * uiScale}
+              strokeOpacity={0.8}
+              strokeDasharray={`${6 * uiScale} ${4 * uiScale}`}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          )}
+          {tool.kind === "cable" && snapTarget && (
+            <circle cx={snapTarget.x} cy={snapTarget.y} r={14 * uiScale} fill="none" stroke={CABLE_META[tool.cableType].color} strokeWidth={2 * uiScale} strokeDasharray={`${3 * uiScale} ${2 * uiScale}`} />
+          )}
+
           {/* pengukuran */}
           {floor.measurements.map((m) => (
             <MeasureLine
@@ -591,6 +684,65 @@ export function Canvas() {
         </>
       )}
     </div>
+  );
+}
+
+function CableLine({
+  cable,
+  uiScale,
+  ppm,
+  selected,
+  highlighted,
+  interactive,
+  onSelect,
+}: {
+  cable: Cable;
+  uiScale: number;
+  ppm: number | null;
+  selected: boolean;
+  highlighted: boolean;
+  interactive: boolean;
+  onSelect: () => void;
+}) {
+  const meta = CABLE_META[cable.type];
+  const color = highlighted ? "#ef4444" : meta.color;
+  const px = polylineLength(cable.points);
+  const label = `${cable.label} \u00b7 ${ppm ? formatMeters(px / ppm + cable.extraM) : `${Math.round(px)} px`}`;
+  const mid = cable.points[Math.floor((cable.points.length - 1) / 2)];
+  const mid2 = cable.points[Math.min(cable.points.length - 1, Math.floor((cable.points.length - 1) / 2) + 1)];
+  const mx = (mid.x + mid2.x) / 2;
+  const my = (mid.y + mid2.y) / 2;
+  const fs = 10 * uiScale;
+  const w = (label.length * 5.6 + 10) * uiScale;
+  const dash = meta.dash ? meta.dash.split(" ").map((v) => Number(v) * uiScale).join(" ") : undefined;
+  return (
+    <g
+      style={{ pointerEvents: interactive ? "all" : "none", cursor: interactive ? "pointer" : "inherit" }}
+      onPointerDown={(e) => {
+        if (!interactive || e.button !== 0) return;
+        e.stopPropagation();
+        onSelect();
+      }}
+    >
+      {/* jalur lebar transparan agar mudah diklik */}
+      <polyline points={cable.points.map((p) => `${p.x},${p.y}`).join(" ")} fill="none" stroke="transparent" strokeWidth={12 * uiScale} />
+      <polyline
+        points={cable.points.map((p) => `${p.x},${p.y}`).join(" ")}
+        fill="none"
+        stroke={color}
+        strokeWidth={(selected || highlighted ? 4.5 : 3) * uiScale}
+        strokeDasharray={dash}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      {cable.points.map((p, i) => (
+        <circle key={i} cx={p.x} cy={p.y} r={(i === 0 || i === cable.points.length - 1 ? 4 : 2.5) * uiScale} fill="#fff" stroke={color} strokeWidth={1.5 * uiScale} />
+      ))}
+      <rect x={mx - w / 2} y={my - fs} width={w} height={fs * 1.6} rx={3 * uiScale} fill="#fff" fillOpacity={0.92} stroke={color} strokeWidth={uiScale} />
+      <text x={mx} y={my + fs * 0.25} textAnchor="middle" fontSize={fs} fill={color} fontWeight={600}>
+        {label}
+      </text>
+    </g>
   );
 }
 

@@ -345,6 +345,66 @@ def add_wall(a):
     return {"ok": True, "walls": len(f["walls"])}
 
 
+CABLE_TYPES = ["power", "data", "fiber", "coax", "other"]
+
+
+@tool("list_cables", "Daftar jalur kabel yang digambar di denah (titik dalam meter, panjang jalur, perangkat ujung).",
+      {**P_PID, "floor_id": {"type": "string"}}, ["project_id"])
+def list_cables(a):
+    p = _project(a["project_id"])
+    floors = [_floor(p, a["floor_id"])] if a.get("floor_id") else p["floors"]
+    out = []
+    for f in floors:
+        ppm = _ppm(f)
+        labels = {d["id"]: d.get("label") for d in f["devices"]}
+        for c in f.get("cables") or []:
+            pts = c.get("points") or []
+            ln = sum(math.hypot(pts[i]["x"] - pts[i - 1]["x"], pts[i]["y"] - pts[i - 1]["y"]) for i in range(1, len(pts))) / ppm
+            out.append({"id": c["id"], "floor_id": f["id"], "type": c["type"], "label": c["label"], "from": labels.get(c.get("fromId")),
+                        "to": labels.get(c.get("toId")), "route_m": round(ln, 2), "extra_m": c.get("extraM", 0), "total_m": round(ln + float(c.get("extraM") or 0), 2),
+                        "points_m": [[round(q["x"] / ppm, 2), round(q["y"] / ppm, 2)] for q in pts], "note": c.get("note", "")})
+    return out
+
+
+@tool("add_cable", "Gambar jalur kabel di lantai. type: power (NYM), data (Cat6), fiber, coax, other. points_m = [[x,y],...] dalam meter; "
+      "bila from_device / to_device diisi (id atau label), titik awal/akhir diambil dari posisi perangkat itu. extra_m = tambahan drop/cadangan (default 3).",
+      {**P_PID, **P_FID, "type": {"type": "string", "enum": CABLE_TYPES}, "points_m": {"type": "array", "items": {"type": "array", "items": {"type": "number"}}},
+       "from_device": {"type": "string"}, "to_device": {"type": "string"}, "label": {"type": "string"}, "extra_m": {"type": "number"}, "note": {"type": "string"}},
+      ["project_id", "floor_id", "type"])
+def add_cable(a):
+    p = _project(a["project_id"])
+    f = _floor(p, a["floor_id"])
+    ppm = _ppm(f)
+    t = a["type"] if a["type"] in CABLE_TYPES else "other"
+    pts = [{"x": float(x) * ppm, "y": float(y) * ppm} for x, y in (a.get("points_m") or [])]
+    from_id = to_id = None
+    if a.get("from_device"):
+        _, d = _find_device(p, a["from_device"]); from_id = d["id"]; pts.insert(0, {"x": d["x"], "y": d["y"]})
+    if a.get("to_device"):
+        _, d = _find_device(p, a["to_device"]); to_id = d["id"]; pts.append({"x": d["x"], "y": d["y"]})
+    if len(pts) < 2:
+        raise ToolError("jalur kabel minimal 2 titik (points_m dan/atau from_device + to_device)")
+    f.setdefault("cables", [])
+    short = {"power": "Listrik", "data": "Data", "fiber": "Fiber", "coax": "Coax", "other": "Lainnya"}[t]
+    c = {"id": _uid(), "type": t, "label": a.get("label") or f"{short}-{len(f['cables']) + 1}", "points": pts, "fromId": from_id, "toId": to_id,
+         "extraM": float(a.get("extra_m", 3)), "note": a.get("note") or ""}
+    f["cables"].append(c)
+    _save(p)
+    return {"ok": True, "cable": list_cables({"project_id": p["id"], "floor_id": f["id"]})[-1]}
+
+
+@tool("delete_cable", "Hapus jalur kabel (id atau label).", {**P_PID, "cable_id": {"type": "string"}}, ["project_id", "cable_id"])
+def delete_cable(a):
+    p = _project(a["project_id"])
+    for f in p["floors"]:
+        for c in f.get("cables") or []:
+            if c["id"] == a["cable_id"] or c.get("label", "").lower() == str(a["cable_id"]).lower():
+                f["cables"] = [x for x in f["cables"] if x["id"] != c["id"]]
+                _save(p)
+                return {"ok": True}
+    raise ToolError(f"kabel '{a['cable_id']}' tidak ditemukan")
+
+
 @tool("get_cable_estimate", "Estimasi per lantai: jumlah titik, panjang kabel per jenis, conduit, tray, dan daftar material (sama dengan halaman Technical Site Survey). kind: all|cctv|sk|lan|wifi|modem.",
       {**P_PID, "kind": {"type": "string", "enum": list(pdf_report.CATS), "default": "all"}}, ["project_id"])
 def get_cable_estimate(a):

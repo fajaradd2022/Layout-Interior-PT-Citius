@@ -57,6 +57,28 @@ TYPE_NAME = {"outlet": "Stop kontak", "lan": "Port LAN", "switch": "Switch / rak
 CABLE = {"outlet": "NYM 3 x 2,5 mm²", "lan": "UTP Cat6", "router": "UTP Cat6 (PoE+)",
          "bullet": "UTP Cat6 (PoE)", "ptz": "UTP Cat6 (PoE+)", "fisheye": "UTP Cat6 (PoE)", "modem": "Patch Cat6 / fiber"}
 DATA_TYPES = {"lan", "router", "modem"} | CAM_TYPES
+CABLE_STYLE = {  # jenis kabel yang digambar di aplikasi -> warna, pola, nama
+    "power": (RED, None, "Kabel listrik NYM 3 x 2,5 mm\u00b2"),
+    "data": (BLUE, "[3 2] 0", "UTP Cat6"),
+    "fiber": (GREEN, "[4 2 1 2] 0", "Fiber OM3 / drop cable"),
+    "coax": (ORANGE, "[2 2] 0", "Coaxial RG6"),
+    "other": (GRAY, "[1 2] 0", "Kabel lain"),
+}
+CABLE_CATS = {"power": {"sk", "all"}, "data": {"lan", "cctv", "wifi", "all"}, "fiber": {"modem", "all"}, "coax": {"cctv", "all"}, "other": {"all"}}
+
+
+def _poly_len(points):
+    return sum(math.hypot(points[i]["x"] - points[i - 1]["x"], points[i]["y"] - points[i - 1]["y"]) for i in range(1, len(points)))
+
+
+def _cable_index(floor):
+    """id perangkat -> kabel yang tersambung (ujung awal atau akhir)."""
+    idx = {}
+    for c in floor.get("cables") or []:
+        for k in ("fromId", "toId"):
+            if c.get(k):
+                idx.setdefault(c[k], c)
+    return idx
 
 
 def _r05(m):
@@ -182,10 +204,22 @@ def compute_runs(floor, cat):
     devs = floor.get("devices") or []
     switches = [d for d in devs if d["type"] == "switch"]
     panels = [d for d in devs if d["type"] == "panel"]
+    cidx = _cable_index(floor)
+    labels = {d["id"]: d.get("label") or d["type"] for d in devs}
     runs = []
     for d in devs:
         t = d["type"]
         if t not in C["types"] or t in ("switch", "panel", "chair", "desk"):
+            continue
+        cab = cidx.get(d["id"])
+        if cab:  # jalur digambar manual di aplikasi: pakai panjang jalurnya
+            other = cab["toId"] if cab.get("fromId") == d["id"] else cab.get("fromId")
+            horiz = _poly_len(cab["points"]) * cmpx
+            drop = float(cab.get("extraM") or 0) * 100
+            runs.append(dict(id=d["id"], label=d.get("label") or t, type=t, src=labels.get(other, "ujung jalur"), src_dev=None,
+                             horiz=horiz / 100, drop=drop / 100, total=_r05((horiz + drop) / 100 * SPARE), conduit=_r05((horiz + drop) / 100),
+                             cable=CABLE_STYLE.get(cab.get("type"), CABLE_STYLE["other"])[2], note=f"jalur {cab.get('label', '')} (digambar)" + (f"; {d.get('note')}" if d.get("note") else ""),
+                             dst=TYPE_NAME.get(t, t)))
             continue
         if t == "outlet":
             src = _nearest(panels, d)
@@ -205,6 +239,19 @@ def compute_runs(floor, cat):
                          horiz=horiz / 100, drop=drop / 100, total=total, conduit=_r05((branch + drop) / 100),
                          cable=CABLE.get(t, "UTP Cat6"), note=d.get("note") or "",
                          dst=TYPE_NAME.get(t, t)))
+    # jalur kabel yang tidak tersambung ke perangkat kategori ini (mis. trunk/backbone yang digambar bebas)
+    used = {r["id"] for r in runs}
+    for cab in floor.get("cables") or []:
+        if cat not in CABLE_CATS.get(cab.get("type"), {"all"}):
+            continue
+        if cab.get("fromId") in used or cab.get("toId") in used:
+            continue
+        horiz = _poly_len(cab["points"]) * cmpx
+        drop = float(cab.get("extraM") or 0) * 100
+        runs.append(dict(id=cab["id"], label=cab.get("label") or "Kabel", type="cable", src=labels.get(cab.get("fromId"), "-"), src_dev=None,
+                         horiz=horiz / 100, drop=drop / 100, total=_r05((horiz + drop) / 100 * SPARE), conduit=_r05((horiz + drop) / 100),
+                         cable=CABLE_STYLE.get(cab.get("type"), CABLE_STYLE["other"])[2], note=(cab.get("note") or "jalur digambar"),
+                         dst=labels.get(cab.get("toId"), "-")))
     return runs
 
 
@@ -277,9 +324,25 @@ def draw_devices(fs, floor, cat):
         elif d["type"] == "router":
             r = float(d.get("radiusM") or 10) * ppm
             fs.poly(pdfgen.clip_poly(pdfgen.circle(d["x"], d["y"], r), bbox), GREEN, 0.14, stroke=GREEN, width=0.6)
-    # jalur kabel: trunk vertikal dari sumber, cabang horizontal ke titik
+    # jalur kabel yang digambar di aplikasi (prioritas), lalu jalur skematis otomatis untuk perangkat tanpa kabel
+    cidx = _cable_index(floor)
+    for cab in floor.get("cables") or []:
+        if cat not in CABLE_CATS.get(cab.get("type"), {"all"}) and not (cab.get("fromId") in {d["id"] for d in sel} or cab.get("toId") in {d["id"] for d in sel}):
+            continue
+        pts = [(p["x"], p["y"]) for p in cab.get("points") or []]
+        if len(pts) < 2:
+            continue
+        col, dash, _ = CABLE_STYLE.get(cab.get("type"), CABLE_STYLE["other"])
+        fs.line(pts, col, 1.2, dash)
+        for x, y in (pts[0], pts[-1]):
+            pg.draw_circle(fs.pt(x, y), 1.6, color=col, fill=WHITE, width=0.6)
+        mid = pts[len(pts) // 2]
+        ln = _poly_len(cab["points"]) * fs.cm_per_px / 100 + float(cab.get("extraM") or 0)
+        wiring.label(pg, fs.pt(*mid), f"{cab.get('label', 'Kabel')} {ln:.1f} m", col, dx=4, dy=-4, size=4.2, bold=False)
     for d in sel:
         t = d["type"]
+        if d["id"] in cidx:
+            continue
         if t == "outlet":
             src = _nearest(panels, d)
             col, dash = RED, None
@@ -361,9 +424,12 @@ def _legend_items(cat):
         "l_modem": (lambda pg, p: pg.draw_line(p + pymupdf.Point(-7, 0), p + pymupdf.Point(7, 0), color=PURPLE, width=1.0), "Patch modem -> switch"),
         "furn": (lambda pg, p: pg.draw_rect(pymupdf.Rect(p.x - 7, p.y - 4, p.x + 7, p.y + 4), color=(0.5, 0.4, 0.2), fill=(0.96, 0.79, 0.54), fill_opacity=0.35, width=0.4), "Meja / kursi (layout interior)"),
         "wall": (lambda pg, p: pg.draw_line(p + pymupdf.Point(-7, 0), p + pymupdf.Point(7, 0), color=(0.15, 0.15, 0.15), width=1.2), "Dinding / penghalang"),
+        "cab": (lambda pg, p: (pg.draw_line(p + pymupdf.Point(-7, 0), p + pymupdf.Point(7, 0), color=BLUE, width=1.2, dashes="[3 2] 0"),
+                              pg.draw_circle(p + pymupdf.Point(-7, 0), 1.4, color=BLUE, fill=WHITE, width=0.6), pg.draw_circle(p + pymupdf.Point(7, 0), 1.4, color=BLUE, fill=WHITE, width=0.6)),
+                "Jalur kabel digambar di aplikasi (warna = jenis kabel)"),
     }
     keys = {
-        "all": ["outlet", "lan", "cam", "router", "modem", "switch", "panel", "l_power", "l_data", "l_modem", "furn", "wall"],
+        "all": ["outlet", "lan", "cam", "router", "modem", "switch", "panel", "l_power", "l_data", "l_modem", "cab", "furn", "wall"],
         "sk": ["outlet", "panel", "l_power", "furn", "wall"],
         "lan": ["lan", "switch", "l_data", "furn", "wall"],
         "cctv": ["cam", "switch", "l_data", "furn", "wall"],

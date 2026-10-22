@@ -12,7 +12,7 @@ import {
   Zap,
   type LucideIcon,
 } from "lucide-react";
-import type { CameraDevice, Device, DeviceType } from "./types";
+import type { Cable, CableType, CameraDevice, Device, DeviceType } from "./types";
 
 export interface DeviceMeta {
   type: DeviceType;
@@ -125,6 +125,29 @@ export const DEVICE_META: Record<DeviceType, DeviceMeta> = {
     group: "cctv",
   },
 };
+
+export interface CableMeta {
+  type: CableType;
+  label: string;
+  short: string;
+  spec: string;
+  color: string;
+  /** pola garis SVG (kosong = garis penuh) */
+  dash: string;
+}
+
+export const CABLE_META: Record<CableType, CableMeta> = {
+  power: { type: "power", label: "Kabel listrik", short: "Listrik", spec: "NYM 3 x 2,5 mm\u00b2 dalam conduit", color: "#dc2626", dash: "" },
+  data: { type: "data", label: "Kabel data", short: "Data", spec: "UTP Cat6 (LAN / CCTV / AP, PoE)", color: "#2563eb", dash: "8 5" },
+  fiber: { type: "fiber", label: "Fiber optik", short: "Fiber", spec: "Fiber OM3 / drop cable ISP", color: "#059669", dash: "10 4 2 4" },
+  coax: { type: "coax", label: "Kabel coaxial", short: "Coax", spec: "RG6 (CCTV analog / TV)", color: "#d97706", dash: "4 3" },
+  other: { type: "other", label: "Kabel lain", short: "Lainnya", spec: "mis. kabel telepon, speaker, kontrol", color: "#6b7280", dash: "2 3" },
+};
+export const CABLE_ORDER: CableType[] = ["power", "data", "fiber", "coax", "other"];
+
+export function createCable(type: CableType, points: Cable["points"], index: number, fromId: string | null, toId: string | null): Cable {
+  return { id: uid(), type, label: `${CABLE_META[type].short}-${index}`, points, fromId, toId, extraM: 3, note: "" };
+}
 
 export const CAMERA_TYPES: DeviceType[] = ["bullet", "ptz", "fisheye"];
 export function isCamera(d: Device): d is CameraDevice {

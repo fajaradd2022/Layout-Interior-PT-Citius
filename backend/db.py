@@ -67,6 +67,18 @@ CREATE TABLE IF NOT EXISTS measurements (
   a TEXT NOT NULL, b TEXT NOT NULL,
   PRIMARY KEY (floor_id, id)
 );
+CREATE TABLE IF NOT EXISTS cables (
+  id TEXT NOT NULL,
+  floor_id TEXT NOT NULL REFERENCES floors(id) ON DELETE CASCADE,
+  ord INTEGER NOT NULL DEFAULT 0,
+  type TEXT NOT NULL DEFAULT 'data',
+  label TEXT NOT NULL DEFAULT '',
+  from_id TEXT, to_id TEXT,
+  points TEXT NOT NULL,
+  extra_m REAL NOT NULL DEFAULT 0,
+  note TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (floor_id, id)
+);
 CREATE INDEX IF NOT EXISTS ix_floors_project ON floors(project_id, ord);
 CREATE INDEX IF NOT EXISTS ix_devices_floor ON devices(floor_id, ord);
 """
@@ -134,10 +146,13 @@ def get_project(pid):
                      for w in con.execute("SELECT * FROM walls WHERE floor_id = ? ORDER BY ord", (f["id"],))]
             meas = [{"id": m["id"], "a": json.loads(m["a"]), "b": json.loads(m["b"])}
                     for m in con.execute("SELECT * FROM measurements WHERE floor_id = ? ORDER BY ord", (f["id"],))]
+            cables = [{"id": c["id"], "type": c["type"], "label": c["label"], "fromId": c["from_id"], "toId": c["to_id"],
+                       "points": json.loads(c["points"]), "extraM": c["extra_m"], "note": c["note"]}
+                      for c in con.execute("SELECT * FROM cables WHERE floor_id = ? ORDER BY ord", (f["id"],))]
             floors.append({
                 "id": f["id"], "name": f["name"], "imageUrl": f["image_url"],
                 "imageWidth": f["image_width"], "imageHeight": f["image_height"],
-                "pxPerMeter": f["px_per_meter"], "devices": devices, "walls": walls, "measurements": meas,
+                "pxPerMeter": f["px_per_meter"], "devices": devices, "walls": walls, "measurements": meas, "cables": cables,
             })
         return {"id": p["id"], "name": p["name"], "createdAt": p["created_at"], "updatedAt": p["updated_at"], "floors": floors}
 
@@ -175,6 +190,10 @@ def save_project(pid, project):
             for mi, m in enumerate(f.get("measurements") or []):
                 con.execute("INSERT INTO measurements (id, floor_id, ord, a, b) VALUES (?,?,?,?,?)",
                             (str(m.get("id") or _uid()), fid, mi, json.dumps(m.get("a")), json.dumps(m.get("b"))))
+            for ci, c in enumerate(f.get("cables") or []):
+                con.execute("INSERT INTO cables (id, floor_id, ord, type, label, from_id, to_id, points, extra_m, note) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                            (str(c.get("id") or _uid()), fid, ci, str(c.get("type") or "data"), str(c.get("label") or ""),
+                             c.get("fromId"), c.get("toId"), json.dumps(c.get("points") or []), float(c.get("extraM") or 0), str(c.get("note") or "")))
     return get_project(pid)
 
 

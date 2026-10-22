@@ -104,6 +104,22 @@ export type Device =
   | RouterDevice
   | PanelDevice;
 
+export type CableType = "power" | "data" | "fiber" | "coax" | "other";
+
+/** Jalur kabel yang digambar di denah (polyline dalam piksel gambar). */
+export interface Cable {
+  id: string;
+  type: CableType;
+  label: string;
+  points: Point[];
+  /** id perangkat di ujung awal / akhir (bila jalur disambungkan ke perangkat) */
+  fromId: string | null;
+  toId: string | null;
+  /** tambahan panjang (meter) untuk drop vertikal / cadangan terminasi */
+  extraM: number;
+  note: string;
+}
+
 export interface Wall {
   id: string;
   points: Point[];
@@ -126,6 +142,7 @@ export interface Floor {
   devices: Device[];
   walls: Wall[];
   measurements: Measurement[];
+  cables: Cable[];
 }
 
 export interface Project {
@@ -141,4 +158,5 @@ export type Tool =
   | { kind: "wall" }
   | { kind: "measure" }
   | { kind: "calibrate" }
+  | { kind: "cable"; cableType: CableType }
   | { kind: "place"; device: DeviceType };

@@ -1,6 +1,7 @@
 "use client";
 
-import { DEVICE_META, DEVICE_ORDER } from "@/lib/devices";
+import { CABLE_META, CABLE_ORDER, DEVICE_META, DEVICE_ORDER } from "@/lib/devices";
+import { Cable } from "lucide-react";
 import type { DeviceType } from "@/lib/types";
 import { useDesignStore } from "@/store/design-store";
 import { cn } from "@/lib/utils";
@@ -17,6 +18,7 @@ export function DeviceToolbar() {
   const setTool = useDesignStore((s) => s.setTool);
 
   const activeType: DeviceType | null = tool.kind === "place" ? tool.device : null;
+  const activeCable = tool.kind === "cable" ? tool.cableType : null;
 
   return (
     <aside className="flex w-56 shrink-0 flex-col border-r bg-card xl:w-60">
@@ -72,6 +74,35 @@ export function DeviceToolbar() {
             </div>
           </div>
         ))}
+        <div className="mb-4">
+          <p className="mb-1.5 px-1 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Jalur kabel (wiring)</p>
+          <div className="grid gap-1.5">
+            {CABLE_ORDER.map((t) => {
+              const m = CABLE_META[t];
+              const active = activeCable === t;
+              return (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setTool(active ? { kind: "select" } : { kind: "cable", cableType: t })}
+                  className={cn(
+                    "flex w-full min-w-0 items-center gap-3 rounded-lg border px-2.5 py-2 text-left transition-all",
+                    active ? "border-primary bg-accent shadow-sm" : "border-border bg-background hover:border-[#c9cdd4] hover:shadow-sm",
+                  )}
+                >
+                  <span className="flex size-8 shrink-0 items-center justify-center rounded-full text-white" style={{ background: m.color }}>
+                    <Cable className="size-4" />
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block text-sm font-medium">{m.label}</span>
+                    <span className="block truncate text-[11px] text-muted-foreground">{m.spec}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          <p className="mt-1.5 px-1 text-[11px] text-muted-foreground">Klik perangkat awal, titik belokan, lalu perangkat tujuan. Panjang dihitung dari skala denah.</p>
+        </div>
       </div>
     </aside>
   );

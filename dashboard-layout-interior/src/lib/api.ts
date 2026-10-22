@@ -56,7 +56,10 @@ export function absUrl(url: string | null): string | null {
 }
 
 function normalize(p: Project): Project {
-  return { ...p, floors: p.floors.map((f) => ({ ...f, imageUrl: absUrl(f.imageUrl) })) };
+  return {
+    ...p,
+    floors: p.floors.map((f) => ({ ...f, imageUrl: absUrl(f.imageUrl), cables: f.cables ?? [], walls: f.walls ?? [], measurements: f.measurements ?? [] })),
+  };
 }
 
 export const api = {

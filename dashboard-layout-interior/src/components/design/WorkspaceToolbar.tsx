@@ -14,6 +14,7 @@ import {
   ImageUp,
   Eraser,
   RulerDimensionLine,
+  Cable,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -28,7 +29,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Separator } from "@/components/ui/separator";
 import { useActiveFloor, useDesignStore } from "@/store/design-store";
-import { dist, formatMeters } from "@/lib/geometry";
+import { dist, formatMeters, polylineLength } from "@/lib/geometry";
+import { CABLE_META } from "@/lib/devices";
 import type { Tool } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { AddFloorPlanDialog } from "./AddFloorPlanDialog";
@@ -53,11 +55,14 @@ export function WorkspaceToolbar({ onAddFloor }: { onAddFloor: () => void }) {
   const clearMeasurements = useDesignStore((s) => s.clearMeasurements);
   const removeWall = useDesignStore((s) => s.removeWall);
   const removeMeasurement = useDesignStore((s) => s.removeMeasurement);
+  const removeCable = useDesignStore((s) => s.removeCable);
+  const clearCables = useDesignStore((s) => s.clearCables);
   const setHighlight = useDesignStore((s) => s.setHighlight);
   const activeFloor = useActiveFloor();
   const ppm = activeFloor?.pxPerMeter ?? null;
   const walls = activeFloor?.walls ?? [];
   const measurements = activeFloor?.measurements ?? [];
+  const cables = activeFloor?.cables ?? [];
   const wallLength = (pts: { x: number; y: number }[]) => pts.slice(1).reduce((a, p, i) => a + dist(pts[i], p), 0);
   const fmt = (px: number) => (ppm ? formatMeters(px / ppm) : `${Math.round(px)} px`);
   const showSizes = useDesignStore((s) => s.showSizes);
@@ -94,6 +99,24 @@ export function WorkspaceToolbar({ onAddFloor }: { onAddFloor: () => void }) {
             </Tooltip>
           );
         })}
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className={cn(tool.kind === "cable" && "bg-background text-primary shadow-sm hover:bg-background")}
+                onClick={() => setTool(tool.kind === "cable" ? { kind: "select" } : { kind: "cable", cableType: "data" })}
+                aria-label="Jalur kabel"
+              />
+            }
+          >
+            <Cable />
+          </TooltipTrigger>
+          <TooltipContent>
+            Jalur kabel <span className="opacity-60">(C)</span> - pilih jenis kabel di panel kiri
+          </TooltipContent>
+        </Tooltip>
       </div>
       <DropdownMenu onOpenChange={(o) => !o && setHighlight(null)}>
         <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Hapus dinding / pengukuran" />}>
@@ -152,7 +175,34 @@ export function WorkspaceToolbar({ onAddFloor }: { onAddFloor: () => void }) {
             )}
           </DropdownMenuGroup>
           <DropdownMenuSeparator />
-          <p className="px-2 py-1 text-[11px] text-muted-foreground">Tip: klik ganda dinding / pengukuran di kanvas juga menghapusnya.</p>
+          <DropdownMenuGroup>
+            <DropdownMenuLabel>Kabel ({cables.length})</DropdownMenuLabel>
+            {cables.length === 0 && <DropdownMenuItem disabled>Tidak ada jalur kabel</DropdownMenuItem>}
+            {cables.map((c) => (
+              <DropdownMenuItem
+                key={c.id}
+                onMouseEnter={() => setHighlight(c.id)}
+                onMouseLeave={() => setHighlight(null)}
+                onClick={() => {
+                  setHighlight(null);
+                  removeCable(c.id);
+                }}
+              >
+                <Trash2 className="text-muted-foreground" />
+                <span className="flex-1">{c.label}</span>
+                <span className="text-xs text-muted-foreground">
+                  {CABLE_META[c.type].short} · {ppm ? formatMeters(polylineLength(c.points) / ppm + c.extraM) : `${Math.round(polylineLength(c.points))} px`}
+                </span>
+              </DropdownMenuItem>
+            ))}
+            {cables.length > 1 && (
+              <DropdownMenuItem variant="destructive" onClick={() => confirm("Hapus semua jalur kabel di lantai ini?") && clearCables()}>
+                <Eraser /> Hapus semua kabel
+              </DropdownMenuItem>
+            )}
+          </DropdownMenuGroup>
+          <DropdownMenuSeparator />
+          <p className="px-2 py-1 text-[11px] text-muted-foreground">Tip: klik ganda dinding / pengukuran di kanvas juga menghapusnya; kabel: pilih lalu tekan Delete.</p>
         </DropdownMenuContent>
       </DropdownMenu>
       <Tooltip>
