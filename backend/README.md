@@ -12,6 +12,22 @@ python server.py        # http://localhost:8800
 
 Atau klik dua kali `Jalankan Backend.bat`. Untuk menjalankan backend + frontend sekaligus: `../Jalankan Aplikasi.bat`.
 
+## Login, sesi, dan peran
+
+`auth.py` menyimpan pengguna (PBKDF2-HMAC-SHA256) dan sesi (token acak, 30 hari) di SQLite. Admin bawaan
+`admin / admin123` dibuat saat tabel pengguna kosong. Semua `/api/*` (kecuali `/api/health`, `/api/auth/login`,
+`/api/ai/*`) memerlukan header `Authorization: Bearer <token>`; `/api/settings/*` dan `/api/users*` hanya admin.
+`/mcp` dan `/api/ai/*` memakai API key (bukan sesi); `/uploads/*` dan `/exports/*` publik.
+
+| Metode | Path | Keterangan |
+|---|---|---|
+| POST | `/api/auth/login` `{username,password}` | → `{token,user}` |
+| POST | `/api/auth/logout` | hapus sesi |
+| GET | `/api/auth/me` | pengguna sesi ini |
+| PUT | `/api/auth/password` `{old,new}` | ubah kata sandi sendiri |
+| GET/POST | `/api/users` | (admin) daftar / tambah pengguna `{username,password,name,role}` |
+| PUT/DELETE | `/api/users/{id}` | (admin) ubah `name/role/active/password` / hapus; admin terakhir & akun sendiri dilindungi |
+
 ## API
 
 | Metode | Path | Keterangan |
@@ -74,10 +90,18 @@ Frontend memantau perubahan dari server tiap 5 detik, jadi hasil kerja AI langsu
 Keamanan: default tanpa auth. Aktifkan **Require API key** di Settings bila backend diakses dari luar, atau set
 variabel lingkungan `API_KEY` sebagai kunci induk untuk seluruh `/api/*` dan `/mcp`.
 
+## Jalur kabel (wiring)
+
+Setiap lantai dapat memuat `cables`: polyline (piksel), `type` (power/data/fiber/coax/other), `label`, `fromId`/`toId`
+(perangkat ujung), `extraM` (drop/cadangan), `note`. Di PDF, kabel yang digambar dipakai sebagai jalur dan panjangnya
+(menggantikan jalur skematis otomatis untuk perangkat yang tersambung); TSS menghitung panjang dari jalur tersebut.
+Tool AI: `list_cables`, `add_cable`, `delete_cable`.
+
 ## Skema SQLite
 
 `projects` → `floors` (ord, name, image_url, image_width/height, px_per_meter) → `devices` (type, x, y, rotation,
-label, note, props JSON), `walls` (points JSON), `measurements` (a, b JSON). Kunci perangkat/dinding/pengukuran
+label, note, props JSON), `walls` (points JSON), `measurements` (a, b JSON), `cables` (type, label, from_id, to_id,
+points JSON, extra_m, note). Tabel lain: `users`, `sessions`, `api_keys`, `settings`, `mcp_clients`. Kunci perangkat/dinding/pengukuran
 adalah pasangan `(floor_id, id)`. Posisi perangkat dalam piksel gambar; `px_per_meter` dipakai untuk konversi ke meter.
 
 ## Export PDF

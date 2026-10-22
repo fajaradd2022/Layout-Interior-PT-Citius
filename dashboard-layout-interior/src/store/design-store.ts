@@ -13,7 +13,7 @@ import type {
   Wall,
 } from "@/lib/types";
 import { createDevice, uid } from "@/lib/devices";
-import { api, type ProjectSummary } from "@/lib/api";
+import { api, getToken, type ProjectSummary } from "@/lib/api";
 
 export interface ViewState {
   zoom: number;
@@ -429,7 +429,7 @@ function startWatch() {
   if (watchTimer) return;
   watchTimer = setInterval(async () => {
     const s = useDesignStore.getState();
-    if (!s.projectId || s.loading || s.saveState === "dirty" || s.saveState === "saving" || document.hidden) return;
+    if (!getToken() || !s.projectId || s.loading || s.saveState === "dirty" || s.saveState === "saving" || document.hidden) return;
     try {
       const list = await api.listProjects();
       const me = list.find((p) => p.id === s.projectId);

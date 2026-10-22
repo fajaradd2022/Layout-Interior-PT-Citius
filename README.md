@@ -1,7 +1,8 @@
 # Dashboard Layout Interior - PT Citius
 
 Aplikasi perencanaan penempatan perangkat (CCTV, stop kontak, panel MCB, port LAN, switch, modem, wifi router,
-meja & kursi) di atas denah lantai, dengan export PDF "Plan Wiring & Titik" berkop gambar dan Technical Site Survey.
+meja & kursi) dan jalur kabel (wiring) di atas denah lantai, dengan export PDF "Plan Wiring & Titik" berkop gambar
+dan Technical Site Survey. Ada login dengan peran admin/user, serta integrasi AI lewat MCP dan REST.
 
 | Bagian | Teknologi | Folder |
 |---|---|---|
@@ -19,6 +20,19 @@ cd backend && python server.py          # http://localhost:8800  (pip install py
 ```bash
 cd dashboard-layout-interior && npm install && npm run dev   # http://localhost:3000
 ```
+
+## Login & hak akses
+
+Aplikasi memakai login (sesi 30 hari). Saat database masih kosong, backend membuat admin bawaan
+**admin / admin123** (ditampilkan di konsol backend) - segera ubah lewat menu profil di topbar.
+
+| Peran | Hak |
+|---|---|
+| admin | memakai seluruh aplikasi + **Settings**: manajemen pengguna (tambah/ubah peran/nonaktif/reset sandi/hapus), API key, Instance-level MCP |
+| user | memakai seluruh aplikasi (proyek, denah, perangkat, kabel, export PDF) tanpa manajemen pengguna & pengaturan MCP |
+
+Jalur MCP (`/mcp`) dan REST AI tools (`/api/ai/*`) tidak memakai sesi login, melainkan API key yang dibuat admin
+(lihat Settings > API dan Instance-level MCP > Require API key).
 
 ## Integrasi AI / LLM
 

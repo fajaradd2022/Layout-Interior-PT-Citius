@@ -18,7 +18,10 @@ API (JSON):
   POST   /api/ai/tools/{name}  {args}       panggil tool (lihat ai_tools.py)
   POST   /mcp                               MCP Streamable HTTP (JSON-RPC 2.0); stdio: python mcp_server.py
   GET    /exports/{file}                    PDF hasil tool export_pdf
-  --- pengaturan (Settings di frontend) ---
+  --- login & pengguna (sesi: header Authorization: Bearer <token>) ---
+  POST /api/auth/login {username,password} -> {token,user} | POST /api/auth/logout | GET /api/auth/me | PUT /api/auth/password {old,new}
+  GET/POST /api/users, PUT/DELETE /api/users/{id}   (admin) kelola pengguna: name, role admin|user, active, password
+  --- pengaturan (Settings di frontend, admin) ---
   GET/POST /api/settings/api-keys, DELETE /api/settings/api-keys/{id}   API key (nama, scope tool, kedaluwarsa)
   GET/PUT  /api/settings/mcp                 status MCP, wajib API key, tool & proyek yang diekspos
   GET      /api/settings/mcp/clients, DELETE /api/settings/mcp/clients/{id}   klien yang pernah terhubung
@@ -44,6 +47,7 @@ import db  # noqa: E402
 import pdf_report  # noqa: E402
 import ai_tools  # noqa: E402
 import mcp_server  # noqa: E402
+import auth  # noqa: E402
 
 UPLOAD_DIR = pdf_report.UPLOAD_DIR
 PORT = int(os.environ.get("PORT", "8800"))
@@ -110,7 +114,7 @@ class Handler(BaseHTTPRequestHandler):
     def _cors(self):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-API-Key, Authorization, MCP-Protocol-Version, Mcp-Session-Id")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-API-Key, X-Session, Authorization, MCP-Protocol-Version, Mcp-Session-Id")
         self.send_header("Access-Control-Expose-Headers", "Content-Disposition")
 
     def _json(self, obj, status=HTTPStatus.OK, extra_headers=None):
@@ -158,6 +162,32 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(HTTPStatus.NO_CONTENT)
         self._cors()
         self.end_headers()
+
+    # ------------------------------------------------------------ sesi pengguna (login) & peran
+    PUBLIC_PATHS = {"/", "/api", "/api/health", "/api/auth/login"}
+
+    def _session_token(self):
+        auth_h = self.headers.get("Authorization") or ""
+        if auth_h.lower().startswith("bearer "):
+            return auth_h[7:].strip()
+        return self.headers.get("X-Session") or ""
+
+    def _guard(self, path):
+        """Cek login untuk /api/*. Mengembalikan user (dict) atau {} untuk path publik; None bila respons error sudah dikirim.
+
+        Jalur MCP / AI tools (/mcp, /api/ai/*) memakai API key (lihat _ai_access), bukan sesi; /uploads & /exports publik."""
+        if path in self.PUBLIC_PATHS or path.startswith(("/uploads/", "/exports/", "/mcp", "/api/ai/")):
+            return {}
+        if not path.startswith("/api/"):
+            return {}
+        user = auth.user_from_token(self._session_token())
+        if not user:
+            self._json({"error": "perlu login", "code": "unauthenticated"}, HTTPStatus.UNAUTHORIZED)
+            return None
+        if (path.startswith("/api/settings") or path.startswith("/api/users")) and user["role"] != "admin":
+            self._json({"error": "hanya admin yang boleh mengakses pengaturan & manajemen pengguna", "code": "forbidden"}, HTTPStatus.FORBIDDEN)
+            return None
+        return user
 
     def _raw_key(self):
         key = self.headers.get("X-API-Key") or ""
@@ -223,7 +253,14 @@ class Handler(BaseHTTPRequestHandler):
         path, q = self._route()
         if not self._authorized(path):
             return self._json({"error": "API key tidak valid"}, HTTPStatus.UNAUTHORIZED)
+        user = self._guard(path)
+        if user is None:
+            return
         try:
+            if path == "/api/auth/me":
+                return self._json({"user": user})
+            if path == "/api/users":
+                return self._json(auth.list_users())
             if path == "/api/settings/api-keys":
                 return self._json(db.list_api_keys())
             if path == "/api/settings/mcp":
@@ -276,8 +313,25 @@ class Handler(BaseHTTPRequestHandler):
         path, _ = self._route()
         if not self._authorized(path):
             return self._json({"error": "API key tidak valid"}, HTTPStatus.UNAUTHORIZED)
+        user = self._guard(path)
+        if user is None:
+            return
         try:
             body = self._body()
+            if path == "/api/auth/login":
+                try:
+                    token, u = auth.login(body.get("username"), body.get("password"), self.headers.get("User-Agent") or "")
+                except auth.AuthError as e:
+                    return self._json({"error": str(e)}, HTTPStatus.UNAUTHORIZED)
+                return self._json({"token": token, "user": u})
+            if path == "/api/auth/logout":
+                auth.logout(self._session_token())
+                return self._json({"ok": True})
+            if path == "/api/users":
+                try:
+                    return self._json(auth.create_user(body.get("username"), body.get("password"), body.get("name"), body.get("role") or "user"), HTTPStatus.CREATED)
+                except auth.AuthError as e:
+                    return self._json({"error": str(e)}, HTTPStatus.BAD_REQUEST)
             if path == "/mcp":
                 settings, key = self._ai_access()
                 if settings is None:
@@ -341,7 +395,24 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_PUT(self):
         path, _ = self._route()
+        user = self._guard(path)
+        if user is None:
+            return
         try:
+            if path == "/api/auth/password":
+                body = self._body()
+                try:
+                    auth.change_password(user["id"], body.get("old"), body.get("new"))
+                except auth.AuthError as e:
+                    return self._json({"error": str(e)}, HTTPStatus.BAD_REQUEST)
+                return self._json({"ok": True})
+            m = re.fullmatch(r"/api/users/([A-Za-z0-9_-]+)", path)
+            if m:
+                body = self._body()
+                try:
+                    return self._json(auth.update_user(m.group(1), body, actor_id=user["id"]))
+                except auth.AuthError as e:
+                    return self._json({"error": str(e)}, HTTPStatus.BAD_REQUEST)
             if path == "/api/settings/mcp":
                 body = self._body()
                 patch = {}
@@ -370,6 +441,16 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_DELETE(self):
         path, _ = self._route()
+        user = self._guard(path)
+        if user is None:
+            return
+        m = re.fullmatch(r"/api/users/([A-Za-z0-9_-]+)", path)
+        if m:
+            try:
+                auth.delete_user(m.group(1), actor_id=user["id"])
+                return self._json({"ok": True})
+            except auth.AuthError as e:
+                return self._json({"error": str(e)}, HTTPStatus.BAD_REQUEST)
         m = re.fullmatch(r"/api/settings/api-keys/([A-Za-z0-9_-]+)", path)
         if m:
             ok = db.delete_api_key(m.group(1))
@@ -398,6 +479,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     db.init()
+    created = auth.init()
     os.makedirs(UPLOAD_DIR, exist_ok=True)
     srv = ThreadingHTTPServer((HOST, PORT), Handler)
     url = f"http://localhost:{PORT}/"
@@ -408,6 +490,8 @@ def main():
     print(f" MCP      : {url}mcp  (HTTP)  |  stdio: python {MCP_PATH}")
     print(f" AI tools : {url}api/ai/schema  ->  POST {url}api/ai/tools/<nama>")
     print(" Frontend : jalankan `npm run dev` di dashboard-layout-interior (http://localhost:3000)")
+    if created:
+        print(f" Login    : admin bawaan dibuat -> username '{auth.DEFAULT_ADMIN['username']}', kata sandi '{auth.DEFAULT_ADMIN['password']}' (segera ubah)")
     print(" Tekan Ctrl+C untuk berhenti.")
     print("=" * 64)
     if "--open" in sys.argv:

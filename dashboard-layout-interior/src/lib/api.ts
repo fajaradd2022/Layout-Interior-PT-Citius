@@ -25,28 +25,90 @@ export const EXPORT_KINDS: { kind: ExportKind; label: string }[] = [
   { kind: "modem", label: "Modem / backbone" },
 ];
 
+// ------------------------------------------------------------------ sesi login (token disimpan di localStorage)
+const TOKEN_KEY = "li-session";
+export function getToken(): string | null {
+  try {
+    return localStorage.getItem(TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+export function setToken(t: string) {
+  try {
+    localStorage.setItem(TOKEN_KEY, t);
+  } catch {
+    /* abaikan */
+  }
+}
+export function clearToken() {
+  try {
+    localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    /* abaikan */
+  }
+}
+export function authHeaders(): Record<string, string> {
+  const t = getToken();
+  return t ? { Authorization: `Bearer ${t}` } : {};
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
     res = await fetch(`${API_BASE}${path}`, {
       ...init,
-      headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+      headers: { "Content-Type": "application/json", ...authHeaders(), ...(init?.headers ?? {}) },
     });
   } catch {
     throw new Error(`Backend tidak dapat dihubungi di ${API_BASE}. Jalankan backend/server.py (python server.py).`);
   }
   if (!res.ok) {
     let msg = res.statusText;
+    let code = "";
     try {
       const j = await res.json();
       if (j?.error) msg = j.error;
+      if (j?.code) code = j.code;
     } catch {
       /* abaikan */
     }
-    throw new Error(msg);
+    if (res.status === 401 && path !== "/api/auth/login" && getToken() && typeof window !== "undefined") {
+      window.dispatchEvent(new Event("li-auth-expired"));
+    }
+    throw new Error(code === "forbidden" ? msg : msg);
   }
   return (await res.json()) as T;
 }
+
+export interface AuthUser {
+  id: string;
+  username: string;
+  name: string;
+  role: "admin" | "user";
+  active: boolean;
+  created_at: number;
+  updated_at: number;
+  last_login_at: number | null;
+}
+
+export const authApi = {
+  login: (username: string, password: string) =>
+    req<{ token: string; user: AuthUser }>("/api/auth/login", { method: "POST", body: JSON.stringify({ username, password }) }),
+  logout: () => req<{ ok: boolean }>("/api/auth/logout", { method: "POST", body: "{}" }),
+  me: () => req<{ user: AuthUser }>("/api/auth/me"),
+  changePassword: (oldPw: string, newPw: string) =>
+    req<{ ok: boolean }>("/api/auth/password", { method: "PUT", body: JSON.stringify({ old: oldPw, new: newPw }) }),
+};
+
+export const usersApi = {
+  list: () => req<AuthUser[]>("/api/users"),
+  create: (body: { username: string; password: string; name?: string; role: "admin" | "user" }) =>
+    req<AuthUser>("/api/users", { method: "POST", body: JSON.stringify(body) }),
+  update: (id: string, patch: { name?: string; role?: "admin" | "user"; active?: boolean; password?: string }) =>
+    req<AuthUser>(`/api/users/${id}`, { method: "PUT", body: JSON.stringify(patch) }),
+  remove: (id: string) => req<{ ok: boolean }>(`/api/users/${id}`, { method: "DELETE" }),
+};
 
 /** Ubah URL gambar relatif dari backend (/uploads/..) menjadi absolut. */
 export function absUrl(url: string | null): string | null {
@@ -88,7 +150,7 @@ export const api = {
     try {
       res = await fetch(`${API_BASE}/api/projects/${id}/export`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify(opts),
       });
     } catch {

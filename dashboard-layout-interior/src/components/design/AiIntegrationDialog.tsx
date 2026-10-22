@@ -10,7 +10,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { API_BASE } from "@/lib/api";
+import { API_BASE, authHeaders } from "@/lib/api";
 
 interface AiInfo {
   name: string;
@@ -72,7 +72,7 @@ function AiBody() {
 
   useEffect(() => {
     let active = true;
-    fetch(`${API_BASE}/api/ai/info`)
+    fetch(`${API_BASE}/api/ai/info`, { headers: authHeaders() })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(r.statusText))))
       .then((j: AiInfo) => {
         if (active) setInfo(j);

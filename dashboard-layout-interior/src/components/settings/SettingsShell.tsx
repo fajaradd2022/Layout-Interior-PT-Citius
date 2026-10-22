@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArrowLeft, KeyRound, Plug, Map } from "lucide-react";
+import { ArrowLeft, KeyRound, Plug, Map, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const NAV = [
+  { href: "/settings/users", label: "Users", icon: Users },
   { href: "/settings", label: "API", icon: KeyRound },
   { href: "/settings/mcp", label: "Instance-level MCP", icon: Plug },
 ];

@@ -19,6 +19,9 @@ import {
   Save,
   Settings,
   Trash2,
+  LogOut,
+  KeyRound,
+  UserRound,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -41,6 +44,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useDesignStore } from "@/store/design-store";
+import { useAuthStore } from "@/store/auth-store";
 import { ExportMenu } from "./ExportMenu";
 import { AiIntegrationDialog } from "./AiIntegrationDialog";
 import type { Project } from "@/lib/types";
@@ -63,6 +67,14 @@ export function TopBar({ onAddFloor }: { onAddFloor: () => void }) {
   const [renameOpen, setRenameOpen] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
+  const authUser = useAuthStore((s) => s.user);
+  const logout = useAuthStore((s) => s.logout);
+  const changePassword = useAuthStore((s) => s.changePassword);
+  const isAdmin = authUser?.role === "admin";
+  const [pwOpen, setPwOpen] = useState(false);
+  const [pwOld, setPwOld] = useState("");
+  const [pwNew, setPwNew] = useState("");
+  const [pwErr, setPwErr] = useState<string | null>(null);
   const [draft, setDraft] = useState(name);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -192,9 +204,43 @@ export function TopBar({ onAddFloor }: { onAddFloor: () => void }) {
         <Button variant="ghost" size="sm" onClick={() => setAiOpen(true)} title="Hubungkan AI / LLM lewat MCP atau API">
           <Bot /> AI
         </Button>
-        <Link href="/settings" className="inline-flex h-7 items-center gap-1 rounded-[min(var(--radius-md),12px)] px-2.5 text-[0.8rem] font-medium text-muted-foreground hover:bg-muted hover:text-foreground" title="Settings: API key & Instance-level MCP">
-          <Settings className="size-3.5" /> Settings
-        </Link>
+        {isAdmin && (
+          <Link href="/settings" className="inline-flex h-7 items-center gap-1 rounded-[min(var(--radius-md),12px)] px-2.5 text-[0.8rem] font-medium text-muted-foreground hover:bg-muted hover:text-foreground" title="Settings: Users, API key & Instance-level MCP">
+            <Settings className="size-3.5" /> Settings
+          </Link>
+        )}
+        <DropdownMenu>
+          <DropdownMenuTrigger render={<Button variant="outline" size="sm" />} title="Akun">
+            <UserRound /> {authUser?.name || authUser?.username}
+            <span className={cn("rounded-full px-1.5 text-[10px]", isAdmin ? "bg-[#00b386]/15 text-[#00795a]" : "bg-muted text-muted-foreground")}>{authUser?.role}</span>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="min-w-56">
+            <DropdownMenuGroup>
+              <DropdownMenuLabel>
+                @{authUser?.username} · {isAdmin ? "admin: kelola pengguna & pengaturan" : "user: pengguna aplikasi"}
+              </DropdownMenuLabel>
+            </DropdownMenuGroup>
+            <DropdownMenuItem
+              onClick={() => {
+                setPwOld("");
+                setPwNew("");
+                setPwErr(null);
+                setPwOpen(true);
+              }}
+            >
+              <KeyRound /> Ubah kata sandi
+            </DropdownMenuItem>
+            {isAdmin && (
+              <DropdownMenuItem render={<Link href="/settings/users" />}>
+                <Settings /> Settings & pengguna
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem variant="destructive" onClick={() => void logout()}>
+              <LogOut /> Keluar
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
         {floors.length > 0 && (
           <>
             <ExportMenu
@@ -212,6 +258,46 @@ export function TopBar({ onAddFloor }: { onAddFloor: () => void }) {
       </div>
 
       <AiIntegrationDialog open={aiOpen} onOpenChange={setAiOpen} />
+
+      <Dialog open={pwOpen} onOpenChange={setPwOpen}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Ubah kata sandi</DialogTitle>
+            <DialogDescription>Kata sandi baru minimal 6 karakter.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3">
+            <div className="grid gap-1.5">
+              <Label htmlFor="pw-old">Kata sandi lama</Label>
+              <Input id="pw-old" type="password" value={pwOld} onChange={(e) => setPwOld(e.target.value)} />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="pw-new">Kata sandi baru</Label>
+              <Input id="pw-new" type="password" value={pwNew} onChange={(e) => setPwNew(e.target.value)} />
+            </div>
+            {pwErr && <p className="text-sm text-destructive">{pwErr}</p>}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPwOpen(false)}>
+              Batal
+            </Button>
+            <Button
+              className="btn-primary-vigi"
+              disabled={pwNew.length < 6 || !pwOld}
+              onClick={async () => {
+                try {
+                  await changePassword(pwOld, pwNew);
+                  setPwOpen(false);
+                  alert("Kata sandi berhasil diubah.");
+                } catch (e) {
+                  setPwErr((e as Error).message);
+                }
+              }}
+            >
+              Simpan
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
         <DialogContent>

@@ -85,7 +85,9 @@ Klik dua kali **`Jalankan Aplikasi.bat`** di folder `Layout Interior PT Citius`.
    ```
 
 3. Tunggu sampai muncul `Ready` dan `Local: http://localhost:3000`.
-4. Buka **http://localhost:3000** di browser. Topbar harus menampilkan status **"Tersimpan di server"** (artinya frontend terhubung ke backend).
+4. Buka **http://localhost:3000** di browser, masuk dengan **admin / admin123** (akun bawaan; ubah lewat menu profil di topbar).
+   Topbar harus menampilkan status **"Tersimpan di server"** (artinya frontend terhubung ke backend).
+   Admin dapat membuat akun **user** di **Settings → Users**; user hanya memakai aplikasi (tanpa Settings).
 
 > Urutan penting: backend dulu, baru frontend. Jika frontend dibuka sebelum backend jalan, akan muncul halaman
 > "Backend belum berjalan" dengan tombol **Coba lagi**.
@@ -105,7 +107,9 @@ Simpan file (Ctrl+S) → browser memperbarui sendiri (hot reload) tanpa perlu re
 | Ingin mengubah | Edit file |
 |---|---|
 | Daftar jenis perangkat, label default, warna, ikon | `src/lib/devices.ts` (dan tipe datanya di `src/lib/types.ts`) |
-| Panel properti kanan (field tiap perangkat) | `src/components/design/InspectorPanel.tsx` |
+| Panel properti kanan (field tiap perangkat & kabel) | `src/components/design/InspectorPanel.tsx` |
+| Login, sesi, peran (frontend) | `src/store/auth-store.ts`, `src/components/auth/` |
+| Manajemen pengguna (admin) | `src/components/settings/UsersView.tsx` |
 | Gambar di kanvas (simbol, FOV, label ukuran) | `src/components/design/Canvas.tsx` |
 | Toolbar atas kanvas (alat, tab lantai, toggle ukuran) | `src/components/design/WorkspaceToolbar.tsx` |
 | Topbar (nama proyek, status simpan, tombol export) | `src/components/design/TopBar.tsx` |
@@ -129,7 +133,8 @@ Setelah mengubah file Python, **restart backend**: di terminal backend tekan Ctr
 
 | Ingin mengubah | Edit file |
 |---|---|
-| Endpoint API, upload gambar, CORS, port | `backend/server.py` |
+| Endpoint API, upload gambar, CORS, port, hak akses | `backend/server.py` |
+| Pengguna, kata sandi, sesi | `backend/auth.py` |
 | Skema / penyimpanan SQLite | `backend/db.py` |
 | Isi PDF export (halaman denah, tabel, TSS, material) | `backend/pdf_report.py` |
 | Simbol standar, kop gambar, tabel, legenda, TSS dasar | `backend/vendor/dashboard/pdfgen.py` & `wiring.py` (salinan dari folder `..\..\dashboard`; setelah mengedit yang asli jalankan `python backend/sync_vendor.py`) |
@@ -207,6 +212,7 @@ git pull
 | `ModuleNotFoundError: No module named 'pymupdf'` | Jalankan `pip install pymupdf`. |
 | `'next' is not recognized` atau error saat `npm run dev` | Belum `npm install` di folder `dashboard-layout-interior`. |
 | Port 3000 / 8800 sudah dipakai | Tutup jendela terminal lama yang masih jalan, atau ubah port: frontend `npm run dev -- -p 3001`, backend `set PORT=8801` sebelum `python server.py` (lalu sesuaikan `NEXT_PUBLIC_API_BASE`, lihat bawah). |
+| Halaman login muncul terus / "Sesi berakhir" | Token kedaluwarsa atau database backend dihapus; login lagi. Lupa sandi admin: hapus `backend/data/layout_interior.db` (data proyek ikut hilang) atau minta admin lain mereset. |
 | Frontend tidak bisa simpan, status "Gagal simpan" | Backend mati atau alamat salah. Alamat default backend `http://localhost:8800`; ubah dengan file `dashboard-layout-interior/.env.local` berisi `NEXT_PUBLIC_API_BASE=http://localhost:8801` lalu restart `npm run dev`. |
 | Gambar denah tidak tampil setelah backend dipindah | Gambar diambil dari `backend/data/uploads`; pastikan folder itu ikut dipindah. |
 | Perubahan Python tidak berpengaruh | Backend perlu di-restart (Ctrl+C lalu `python server.py`). |
