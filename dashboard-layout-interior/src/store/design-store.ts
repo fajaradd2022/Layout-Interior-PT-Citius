@@ -77,6 +77,9 @@ interface DesignState {
   /** tampilkan label ukuran (cm) pada meja & kursi di kanvas */
   showSizes: boolean;
   toggleSizes: () => void;
+  /** id dinding/pengukuran yang disorot (mis. saat hover di menu hapus) */
+  highlightId: string | null;
+  setHighlight: (id: string | null) => void;
 }
 
 const DEFAULT_NAME = "Kantor PT Citius";
@@ -114,6 +117,7 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
   pending: [],
   calibrateRequest: null,
   showSizes: true,
+  highlightId: null,
   hydrated: false,
   loading: false,
   saveState: "idle",
@@ -354,6 +358,7 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
   },
   setCalibrateRequest: (r) => set({ calibrateRequest: r }),
   toggleSizes: () => set((s) => ({ showSizes: !s.showSizes })),
+  setHighlight: (id) => set({ highlightId: id }),
 }));
 
 /** Kirim proyek ke backend bila berubah sejak sinkron terakhir. */

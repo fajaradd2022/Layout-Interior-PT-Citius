@@ -20,12 +20,15 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Separator } from "@/components/ui/separator";
-import { useDesignStore } from "@/store/design-store";
+import { useActiveFloor, useDesignStore } from "@/store/design-store";
+import { dist, formatMeters } from "@/lib/geometry";
 import type { Tool } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { AddFloorPlanDialog } from "./AddFloorPlanDialog";
@@ -48,6 +51,15 @@ export function WorkspaceToolbar({ onAddFloor }: { onAddFloor: () => void }) {
   const setTool = useDesignStore((s) => s.setTool);
   const clearWalls = useDesignStore((s) => s.clearWalls);
   const clearMeasurements = useDesignStore((s) => s.clearMeasurements);
+  const removeWall = useDesignStore((s) => s.removeWall);
+  const removeMeasurement = useDesignStore((s) => s.removeMeasurement);
+  const setHighlight = useDesignStore((s) => s.setHighlight);
+  const activeFloor = useActiveFloor();
+  const ppm = activeFloor?.pxPerMeter ?? null;
+  const walls = activeFloor?.walls ?? [];
+  const measurements = activeFloor?.measurements ?? [];
+  const wallLength = (pts: { x: number; y: number }[]) => pts.slice(1).reduce((a, p, i) => a + dist(pts[i], p), 0);
+  const fmt = (px: number) => (ppm ? formatMeters(px / ppm) : `${Math.round(px)} px`);
   const showSizes = useDesignStore((s) => s.showSizes);
   const toggleSizes = useDesignStore((s) => s.toggleSizes);
   const [replaceOpen, setReplaceOpen] = useState(false);
@@ -83,13 +95,64 @@ export function WorkspaceToolbar({ onAddFloor }: { onAddFloor: () => void }) {
           );
         })}
       </div>
-      <DropdownMenu>
-        <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Bersihkan" />}>
+      <DropdownMenu onOpenChange={(o) => !o && setHighlight(null)}>
+        <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Hapus dinding / pengukuran" />}>
           <Eraser />
         </DropdownMenuTrigger>
-        <DropdownMenuContent>
-          <DropdownMenuItem onClick={clearWalls}>Hapus semua dinding</DropdownMenuItem>
-          <DropdownMenuItem onClick={clearMeasurements}>Hapus semua pengukuran</DropdownMenuItem>
+        <DropdownMenuContent className="max-h-96 min-w-64 overflow-y-auto">
+          <DropdownMenuGroup>
+            <DropdownMenuLabel>Dinding ({walls.length})</DropdownMenuLabel>
+            {walls.length === 0 && <DropdownMenuItem disabled>Tidak ada dinding</DropdownMenuItem>}
+            {walls.map((w, i) => (
+              <DropdownMenuItem
+                key={w.id}
+                onMouseEnter={() => setHighlight(w.id)}
+                onMouseLeave={() => setHighlight(null)}
+                onClick={() => {
+                  setHighlight(null);
+                  removeWall(w.id);
+                }}
+              >
+                <Trash2 className="text-muted-foreground" />
+                <span className="flex-1">Dinding {i + 1}</span>
+                <span className="text-xs text-muted-foreground">
+                  {w.points.length} titik · {fmt(wallLength(w.points))}
+                </span>
+              </DropdownMenuItem>
+            ))}
+            {walls.length > 1 && (
+              <DropdownMenuItem variant="destructive" onClick={() => confirm("Hapus semua dinding di lantai ini?") && clearWalls()}>
+                <Eraser /> Hapus semua dinding
+              </DropdownMenuItem>
+            )}
+          </DropdownMenuGroup>
+          <DropdownMenuSeparator />
+          <DropdownMenuGroup>
+            <DropdownMenuLabel>Pengukuran ({measurements.length})</DropdownMenuLabel>
+            {measurements.length === 0 && <DropdownMenuItem disabled>Tidak ada pengukuran</DropdownMenuItem>}
+            {measurements.map((m, i) => (
+              <DropdownMenuItem
+                key={m.id}
+                onMouseEnter={() => setHighlight(m.id)}
+                onMouseLeave={() => setHighlight(null)}
+                onClick={() => {
+                  setHighlight(null);
+                  removeMeasurement(m.id);
+                }}
+              >
+                <Trash2 className="text-muted-foreground" />
+                <span className="flex-1">Ukuran {i + 1}</span>
+                <span className="text-xs text-muted-foreground">{fmt(dist(m.a, m.b))}</span>
+              </DropdownMenuItem>
+            ))}
+            {measurements.length > 1 && (
+              <DropdownMenuItem variant="destructive" onClick={() => confirm("Hapus semua pengukuran di lantai ini?") && clearMeasurements()}>
+                <Eraser /> Hapus semua pengukuran
+              </DropdownMenuItem>
+            )}
+          </DropdownMenuGroup>
+          <DropdownMenuSeparator />
+          <p className="px-2 py-1 text-[11px] text-muted-foreground">Tip: klik ganda dinding / pengukuran di kanvas juga menghapusnya.</p>
         </DropdownMenuContent>
       </DropdownMenu>
       <Tooltip>

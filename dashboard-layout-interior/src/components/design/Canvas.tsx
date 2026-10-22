@@ -37,6 +37,7 @@ export function Canvas() {
   const removeWall = useDesignStore((s) => s.removeWall);
   const removeMeasurement = useDesignStore((s) => s.removeMeasurement);
   const showSizes = useDesignStore((s) => s.showSizes);
+  const highlightId = useDesignStore((s) => s.highlightId);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const sheetRef = useRef<HTMLDivElement>(null);
@@ -379,8 +380,8 @@ export function Canvas() {
               key={w.id}
               points={w.points.map((p) => `${p.x},${p.y}`).join(" ")}
               fill="none"
-              stroke="#1f2937"
-              strokeWidth={wallWidth}
+              stroke={w.id === highlightId ? "#ef4444" : "#1f2937"}
+              strokeWidth={w.id === highlightId ? wallWidth * 1.6 : wallWidth}
               strokeLinecap="round"
               strokeLinejoin="round"
               style={{ pointerEvents: tool.kind === "select" && !exporting ? "stroke" : "none", cursor: "pointer" }}
@@ -493,6 +494,7 @@ export function Canvas() {
               b={m.b}
               uiScale={uiScale}
               ppm={ppm}
+              highlighted={m.id === highlightId}
               onRemove={!exporting ? () => removeMeasurement(m.id) : undefined}
             />
           ))}
@@ -598,6 +600,7 @@ function MeasureLine({
   uiScale,
   ppm,
   dashed,
+  highlighted,
   onRemove,
 }: {
   a: Point;
@@ -605,8 +608,10 @@ function MeasureLine({
   uiScale: number;
   ppm: number | null;
   dashed?: boolean;
+  highlighted?: boolean;
   onRemove?: () => void;
 }) {
+  const color = highlighted ? "#ef4444" : "#f59e0b";
   const px = dist(a, b);
   const label = ppm ? formatMeters(px / ppm) : `${Math.round(px)} px`;
   const mx = (a.x + b.x) / 2;
@@ -626,14 +631,14 @@ function MeasureLine({
         y1={a.y}
         x2={b.x}
         y2={b.y}
-        stroke="#f59e0b"
-        strokeWidth={2 * uiScale}
+        stroke={color}
+        strokeWidth={(highlighted ? 3.5 : 2) * uiScale}
         strokeDasharray={dashed ? `${5 * uiScale} ${4 * uiScale}` : undefined}
       />
       {[a, b].map((p, i) => (
-        <circle key={i} cx={p.x} cy={p.y} r={3.5 * uiScale} fill="#fff" stroke="#f59e0b" strokeWidth={2 * uiScale} />
+        <circle key={i} cx={p.x} cy={p.y} r={3.5 * uiScale} fill="#fff" stroke={color} strokeWidth={2 * uiScale} />
       ))}
-      <rect x={mx - w / 2} y={my - fs} width={w} height={fs * 1.6} rx={3 * uiScale} fill="#fff" stroke="#f59e0b" strokeWidth={uiScale} />
+      <rect x={mx - w / 2} y={my - fs} width={w} height={fs * 1.6} rx={3 * uiScale} fill="#fff" stroke={color} strokeWidth={uiScale} />
       <text x={mx} y={my + fs * 0.25} textAnchor="middle" fontSize={fs} fill="#92400e" fontWeight={600}>
         {label}
       </text>
