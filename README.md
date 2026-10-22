@@ -104,8 +104,10 @@ dashboard Cloudflare (pilih domain):
      (http.request.uri.path eq "/mcp") or (starts_with(http.request.uri.path, "/mcp/")) or
      (starts_with(http.request.uri.path, "/api/ai/")) or (http.request.uri.path eq "/api/health")
      ```
-   - Action: **Skip** → centang *All remaining custom rules*, dan pada *WAF components to skip*: Security Level,
-     Browser Integrity Check, Rate limiting rules, Managed rules, serta Super Bot Fight Mode bila tersedia.
+   - Action: **Skip** → centang *All remaining custom rules* saja (JANGAN bersamaan dengan *All remaining custom rules
+     in this phase*; keduanya saling eksklusif dan memunculkan error "skip action parameters 'phase' and 'ruleset'
+     cannot be used together"). Lalu centang: All rate limiting rules, All managed rules, All Super Bot Fight Mode Rules,
+     dan di *More components to skip*: Browser Integrity Check, Security Level, User Agent Blocking, Zone Lockdown.
 4. Bila ada aturan lain yang menantang semua request (Security > WAF > Custom rules / Rate limiting / Page Rules /
    Configuration Rules "Security Level"), pastikan aturan Skip di atas berada di urutan pertama.
 
