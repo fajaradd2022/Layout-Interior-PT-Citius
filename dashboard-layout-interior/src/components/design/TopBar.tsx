@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import Link from "next/link";
 import {
   ArrowLeft,
   Bot,
@@ -16,6 +17,7 @@ import {
   Pencil,
   Map,
   Save,
+  Settings,
   Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -190,6 +192,9 @@ export function TopBar({ onAddFloor }: { onAddFloor: () => void }) {
         <Button variant="ghost" size="sm" onClick={() => setAiOpen(true)} title="Hubungkan AI / LLM lewat MCP atau API">
           <Bot /> AI
         </Button>
+        <Link href="/settings" className="inline-flex h-7 items-center gap-1 rounded-[min(var(--radius-md),12px)] px-2.5 text-[0.8rem] font-medium text-muted-foreground hover:bg-muted hover:text-foreground" title="Settings: API key & Instance-level MCP">
+          <Settings className="size-3.5" /> Settings
+        </Link>
         {floors.length > 0 && (
           <>
             <ExportMenu

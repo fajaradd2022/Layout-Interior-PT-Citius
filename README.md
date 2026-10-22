@@ -24,8 +24,9 @@ cd dashboard-layout-interior && npm install && npm run dev   # http://localhost:
 
 Aplikasi menyediakan **server MCP** (stdio `backend/mcp_server.py` atau HTTP `POST /mcp`) dan **REST AI tools**
 (`/api/ai/schema`, `POST /api/ai/tools/{nama}`) sehingga Claude Desktop/Claude Code/Cursor atau agen lain dapat
-menambah lantai, menempatkan perangkat, menghitung estimasi kabel, dan membuat PDF. Klik tombol **AI** di topbar
-aplikasi untuk konfigurasi siap salin. Detail di `backend/README.md`.
+menambah lantai, menempatkan perangkat, menghitung estimasi kabel, dan membuat PDF. Halaman **Settings** di aplikasi
+(API key dengan scope & masa berlaku; Instance-level MCP: status, Connect your client, tool/proyek yang diekspos,
+wajib API key, connected clients) mengatur aksesnya. Detail di `backend/README.md`.
 
 ## Deploy dengan Docker
 

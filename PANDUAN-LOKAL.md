@@ -167,7 +167,10 @@ Hasil PDF muncul di folder `C:\Users\WELCOME\Downloads\Layout Lt 1-5 Kantor PT C
 ## 6. Menghubungkan AI (Claude Desktop / Claude Code / Cursor)
 
 1. Pastikan backend berjalan (bagian 3.2) bila memakai jalur HTTP; jalur stdio tidak perlu backend berjalan.
-2. Di aplikasi klik tombol **AI** (topbar) → salin konfigurasi yang sesuai:
+2. Di aplikasi klik **Settings** (topbar) → **Instance-level MCP** → **Connect**, pilih klien, salin langkahnya.
+   Bila ingin membatasi akses: buat key di **Settings → API**, lalu aktifkan **Require API key**; batasi tool/proyek
+   lewat **Tools exposed** / **Projects exposed**. Klien yang pernah terhubung tampil di **Connected clients**.
+   (Ringkasan konfigurasi juga ada di tombol **AI** di topbar.) Pilih sesuai klien:
    - Claude Desktop: tempel ke `%APPDATA%\Claude\claude_desktop_config.json`, lalu restart Claude Desktop.
    - Claude Code: jalankan perintah `claude mcp add ...` yang tertera di terminal.
    - Cursor: tempel ke `.cursor/mcp.json`.

@@ -14,6 +14,7 @@ import json
 import os
 import sys
 import traceback
+import uuid
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -30,6 +31,39 @@ INSTRUCTIONS = (
 )
 
 
+# ------------------------------------------------------------------ kontrol akses (pengaturan MCP + scope API key)
+def allowed_tools(settings, key=None):
+    names = [t["name"] for t in ai_tools.TOOLS]
+    exp = settings.get("exposed_tools", "all")
+    if exp != "all":
+        names = [n for n in names if n in exp]
+    if key and key.get("scopes"):
+        names = [n for n in names if n in key["scopes"]]
+    return names
+
+
+def project_allowed(settings, pid):
+    exp = settings.get("exposed_projects", "all")
+    return exp == "all" or pid in exp
+
+
+def call_tool_checked(name, args, settings, key=None):
+    """Panggil tool dengan pengecekan tool yang diekspos, scope API key, dan proyek yang diekspos."""
+    if name not in allowed_tools(settings, key):
+        raise ai_tools.ToolError(f"tool '{name}' tidak diizinkan untuk klien ini")
+    pid = (args or {}).get("project_id")
+    if pid and not project_allowed(settings, pid):
+        raise ai_tools.ToolError(f"proyek '{pid}' tidak diekspos ke klien MCP/AI")
+    out = ai_tools.call_tool(name, args)
+    exp = settings.get("exposed_projects", "all")
+    if exp != "all":
+        if name == "list_projects":
+            out = [p for p in out if p["id"] in exp]
+        elif name == "create_project" and isinstance(out, dict) and out.get("id"):
+            db.set_settings({"exposed_projects": list(exp) + [out["id"]]})
+    return out
+
+
 def _result(id_, result):
     return {"jsonrpc": "2.0", "id": id_, "result": result}
 
@@ -41,8 +75,14 @@ def _error(id_, code, message, data=None):
     return {"jsonrpc": "2.0", "id": id_, "error": err}
 
 
-def handle_message(msg):
-    """Proses satu pesan JSON-RPC. Mengembalikan dict respons, atau None untuk notifikasi."""
+def handle_message(msg, ctx=None):
+    """Proses satu pesan JSON-RPC. Mengembalikan dict respons, atau None untuk notifikasi.
+
+    ctx: {"transport": "stdio"|"http", "key": record API key|None, "session_id": str|None, "settings": dict}
+    """
+    ctx = ctx if ctx is not None else {"transport": "stdio", "key": None, "session_id": None}
+    settings = ctx.get("settings") or db.get_settings()
+    key = ctx.get("key")
     if not isinstance(msg, dict):
         return _error(None, -32600, "Invalid Request")
     method = msg.get("method")
@@ -52,6 +92,12 @@ def handle_message(msg):
     try:
         if method == "initialize":
             ver = params.get("protocolVersion") or PROTOCOL_VERSION
+            info = params.get("clientInfo") or {}
+            sid = ctx.get("session_id") or uuid.uuid4().hex[:16]
+            ctx["session_id"] = sid
+            ctx["new_session"] = sid
+            db.upsert_client(sid, info.get("name") or "unknown", str(info.get("version") or ""), ctx.get("transport", "http"),
+                             (key or {}).get("id"))
             return _result(id_, {
                 "protocolVersion": ver if ver in SUPPORTED else PROTOCOL_VERSION,
                 "capabilities": {"tools": {"listChanged": False}},
@@ -62,13 +108,16 @@ def handle_message(msg):
             return None
         if method == "ping":
             return _result(id_, {})
+        if ctx.get("session_id"):
+            db.touch_client(ctx["session_id"], (key or {}).get("id"))
         if method == "tools/list":
-            return _result(id_, {"tools": ai_tools.tool_specs()})
+            allowed = set(allowed_tools(settings, key))
+            return _result(id_, {"tools": [t for t in ai_tools.tool_specs() if t["name"] in allowed]})
         if method == "tools/call":
             name = params.get("name")
             args = params.get("arguments") or {}
             try:
-                out = ai_tools.call_tool(name, args)
+                out = call_tool_checked(name, args, settings, key)
                 text = json.dumps(out, ensure_ascii=False, indent=1)
                 res = {"content": [{"type": "text", "text": text}], "isError": False}
                 if isinstance(out, dict):
@@ -90,17 +139,21 @@ def handle_message(msg):
         return _error(id_, -32603, "Internal error", str(e))
 
 
-def handle_payload(payload):
+def handle_payload(payload, ctx=None):
     """Payload JSON (dict atau list/batch) -> respons (dict, list, atau None)."""
     if isinstance(payload, list):
-        out = [r for r in (handle_message(m) for m in payload) if r is not None]
+        out = [r for r in (handle_message(m, ctx) for m in payload) if r is not None]
         return out or None
-    return handle_message(payload)
+    return handle_message(payload, ctx)
 
 
 def serve_stdio():
     """Transport stdio: satu pesan JSON per baris di stdin, respons satu baris di stdout."""
     db.init()
+    settings = db.get_settings()
+    if not settings.get("enabled", True):
+        sys.stderr.write("MCP dinonaktifkan di pengaturan aplikasi (Settings > Instance-level MCP).\n")
+    ctx = {"transport": "stdio", "key": None, "session_id": None, "settings": settings}
     stdin = sys.stdin.buffer
     stdout = sys.stdout.buffer
     for raw in stdin:
@@ -112,7 +165,11 @@ def serve_stdio():
         except ValueError:
             resp = _error(None, -32700, "Parse error")
         else:
-            resp = handle_payload(payload)
+            ctx["settings"] = db.get_settings()   # pengaturan bisa berubah dari aplikasi saat server berjalan
+            if not ctx["settings"].get("enabled", True) and isinstance(payload, dict) and "id" in payload and payload.get("method") != "initialize":
+                resp = _error(payload.get("id"), -32000, "MCP dinonaktifkan di pengaturan aplikasi")
+            else:
+                resp = handle_payload(payload, ctx)
         if resp is not None:
             stdout.write((json.dumps(resp, ensure_ascii=False) + "\n").encode("utf-8"))
             stdout.flush()

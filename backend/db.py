@@ -84,6 +84,7 @@ def connect():
 def init():
     with _lock, connect() as con:
         con.executescript(SCHEMA)
+    init_settings()
 
 
 def _uid():
@@ -182,3 +183,138 @@ if __name__ == "__main__":
     print("DB:", DB_PATH)
     for p in list_projects():
         print(p)
+
+
+# ================================================================== API keys, pengaturan MCP, klien terhubung
+import hashlib
+import secrets
+
+SCHEMA_SETTINGS = """
+CREATE TABLE IF NOT EXISTS api_keys (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  key_hash TEXT NOT NULL UNIQUE,
+  prefix TEXT NOT NULL,
+  scopes TEXT NOT NULL DEFAULT '[]',
+  created_at REAL NOT NULL,
+  expires_at REAL,
+  last_used_at REAL,
+  revoked INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS mcp_clients (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  version TEXT NOT NULL DEFAULT '',
+  transport TEXT NOT NULL DEFAULT 'http',
+  api_key_id TEXT,
+  first_seen REAL NOT NULL,
+  last_seen REAL NOT NULL,
+  requests INTEGER NOT NULL DEFAULT 0
+);
+"""
+
+MCP_DEFAULTS = {
+    "enabled": True,            # MCP & AI API aktif
+    "require_api_key": False,   # wajib API key untuk /mcp dan /api/ai/*
+    "exposed_tools": "all",     # "all" atau daftar nama tool
+    "exposed_projects": "all",  # "all" atau daftar id proyek
+}
+
+
+def init_settings():
+    with _lock, connect() as con:
+        con.executescript(SCHEMA_SETTINGS)
+
+
+def _key_row(r):
+    return {"id": r["id"], "name": r["name"], "prefix": r["prefix"], "scopes": json.loads(r["scopes"] or "[]"),
+            "created_at": r["created_at"], "expires_at": r["expires_at"], "last_used_at": r["last_used_at"],
+            "revoked": bool(r["revoked"])}
+
+
+def list_api_keys():
+    with _lock, connect() as con:
+        return [_key_row(r) for r in con.execute("SELECT * FROM api_keys WHERE revoked = 0 ORDER BY created_at DESC")]
+
+
+def create_api_key(name, scopes=None, expires_at=None):
+    """Kembalikan (record, kunci_mentah). Kunci mentah hanya ditampilkan sekali."""
+    raw = "li_" + secrets.token_hex(20)
+    rec = {"id": _uid(), "name": (name or "API key").strip() or "API key", "key_hash": hashlib.sha256(raw.encode()).hexdigest(),
+           "prefix": raw[-4:], "scopes": json.dumps(scopes or []), "created_at": time.time(), "expires_at": expires_at}
+    with _lock, connect() as con:
+        con.execute("INSERT INTO api_keys (id, name, key_hash, prefix, scopes, created_at, expires_at) VALUES (?,?,?,?,?,?,?)",
+                    (rec["id"], rec["name"], rec["key_hash"], rec["prefix"], rec["scopes"], rec["created_at"], rec["expires_at"]))
+        row = con.execute("SELECT * FROM api_keys WHERE id = ?", (rec["id"],)).fetchone()
+    return _key_row(row), raw
+
+
+def delete_api_key(kid):
+    with _lock, connect() as con:
+        return con.execute("UPDATE api_keys SET revoked = 1 WHERE id = ?", (kid,)).rowcount > 0
+
+
+def verify_api_key(raw):
+    """Kunci mentah -> record bila valid (belum dicabut/kedaluwarsa); juga mencatat last_used."""
+    if not raw:
+        return None
+    h = hashlib.sha256(raw.encode()).hexdigest()
+    with _lock, connect() as con:
+        r = con.execute("SELECT * FROM api_keys WHERE key_hash = ? AND revoked = 0", (h,)).fetchone()
+        if not r:
+            return None
+        if r["expires_at"] and r["expires_at"] < time.time():
+            return None
+        con.execute("UPDATE api_keys SET last_used_at = ? WHERE id = ?", (time.time(), r["id"]))
+        return _key_row(r)
+
+
+def get_settings():
+    out = dict(MCP_DEFAULTS)
+    with _lock, connect() as con:
+        for r in con.execute("SELECT key, value FROM settings"):
+            try:
+                out[r["key"]] = json.loads(r["value"])
+            except ValueError:
+                pass
+    return out
+
+
+def set_settings(patch):
+    with _lock, connect() as con:
+        for k, v in patch.items():
+            if k in MCP_DEFAULTS:
+                con.execute("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                            (k, json.dumps(v)))
+    return get_settings()
+
+
+def upsert_client(cid, name, version="", transport="http", api_key_id=None):
+    now = time.time()
+    with _lock, connect() as con:
+        con.execute("INSERT INTO mcp_clients (id, name, version, transport, api_key_id, first_seen, last_seen, requests) VALUES (?,?,?,?,?,?,?,1) "
+                    "ON CONFLICT(id) DO UPDATE SET name = excluded.name, version = excluded.version, transport = excluded.transport, "
+                    "api_key_id = COALESCE(excluded.api_key_id, mcp_clients.api_key_id), last_seen = excluded.last_seen, requests = mcp_clients.requests + 1",
+                    (cid, name or "unknown", version or "", transport, api_key_id, now, now))
+
+
+def touch_client(cid, api_key_id=None):
+    with _lock, connect() as con:
+        cur = con.execute("UPDATE mcp_clients SET last_seen = ?, requests = requests + 1, api_key_id = COALESCE(?, api_key_id) WHERE id = ?",
+                          (time.time(), api_key_id, cid))
+        return cur.rowcount > 0
+
+
+def list_clients():
+    with _lock, connect() as con:
+        rows = con.execute("SELECT c.*, k.name AS key_name FROM mcp_clients c LEFT JOIN api_keys k ON k.id = c.api_key_id ORDER BY c.last_seen DESC").fetchall()
+        return [dict(r) for r in rows]
+
+
+def delete_client(cid):
+    with _lock, connect() as con:
+        return con.execute("DELETE FROM mcp_clients WHERE id = ?", (cid,)).rowcount > 0

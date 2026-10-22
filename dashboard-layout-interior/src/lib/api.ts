@@ -100,3 +100,51 @@ export const api = {
     return { blob: await res.blob(), filename: m ? m[1] : "plan-wiring.pdf" };
   },
 };
+
+// ------------------------------------------------------------------ Settings: API key & Instance-level MCP
+export interface ApiKeyRecord {
+  id: string;
+  name: string;
+  prefix: string;
+  scopes: string[];
+  created_at: number;
+  expires_at: number | null;
+  last_used_at: number | null;
+}
+export interface McpSettings {
+  enabled: boolean;
+  require_api_key: boolean;
+  exposed_tools: "all" | string[];
+  exposed_projects: "all" | string[];
+}
+export interface McpSettingsInfo {
+  settings: McpSettings;
+  tools: { name: string; description: string }[];
+  env_api_key: boolean;
+  mcp_http_url: string;
+  stdio_path: string;
+  clients: number;
+}
+export interface McpClient {
+  id: string;
+  name: string;
+  version: string;
+  transport: string;
+  api_key_id: string | null;
+  key_name: string | null;
+  first_seen: number;
+  last_seen: number;
+  requests: number;
+}
+
+export const settingsApi = {
+  listApiKeys: () => req<ApiKeyRecord[]>("/api/settings/api-keys"),
+  createApiKey: (body: { name: string; scopes: string[] | "all"; expires_in_days?: number | null; expires_at?: number | null }) =>
+    req<{ key: ApiKeyRecord; raw_key: string }>("/api/settings/api-keys", { method: "POST", body: JSON.stringify(body) }),
+  deleteApiKey: (id: string) => req<{ ok: boolean }>(`/api/settings/api-keys/${id}`, { method: "DELETE" }),
+  getMcp: () => req<McpSettingsInfo>("/api/settings/mcp"),
+  updateMcp: (patch: Partial<McpSettings>) =>
+    req<{ settings: McpSettings }>("/api/settings/mcp", { method: "PUT", body: JSON.stringify(patch) }),
+  listClients: () => req<McpClient[]>("/api/settings/mcp/clients"),
+  deleteClient: (id: string) => req<{ ok: boolean }>(`/api/settings/mcp/clients/${encodeURIComponent(id)}`, { method: "DELETE" }),
+};

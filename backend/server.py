@@ -18,6 +18,10 @@ API (JSON):
   POST   /api/ai/tools/{name}  {args}       panggil tool (lihat ai_tools.py)
   POST   /mcp                               MCP Streamable HTTP (JSON-RPC 2.0); stdio: python mcp_server.py
   GET    /exports/{file}                    PDF hasil tool export_pdf
+  --- pengaturan (Settings di frontend) ---
+  GET/POST /api/settings/api-keys, DELETE /api/settings/api-keys/{id}   API key (nama, scope tool, kedaluwarsa)
+  GET/PUT  /api/settings/mcp                 status MCP, wajib API key, tool & proyek yang diekspos
+  GET      /api/settings/mcp/clients, DELETE /api/settings/mcp/clients/{id}   klien yang pernah terhubung
 Hanya memakai pustaka standar Python + PyMuPDF.
 """
 import base64
@@ -109,10 +113,12 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers", "Content-Type, X-API-Key, Authorization, MCP-Protocol-Version, Mcp-Session-Id")
         self.send_header("Access-Control-Expose-Headers", "Content-Disposition")
 
-    def _json(self, obj, status=HTTPStatus.OK):
+    def _json(self, obj, status=HTTPStatus.OK, extra_headers=None):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self._cors()
+        for k, v in (extra_headers or {}).items():
+            self.send_header(k, v)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
@@ -153,14 +159,41 @@ class Handler(BaseHTTPRequestHandler):
         self._cors()
         self.end_headers()
 
-    def _authorized(self, path):
-        if not API_KEY or path in ("/", "/api", "/api/health") or path.startswith("/uploads/") or path.startswith("/exports/"):
-            return True
+    def _raw_key(self):
         key = self.headers.get("X-API-Key") or ""
         auth = self.headers.get("Authorization") or ""
-        if auth.lower().startswith("bearer "):
-            key = key or auth[7:].strip()
-        return key == API_KEY
+        if not key and auth.lower().startswith("bearer "):
+            key = auth[7:].strip()
+        return key
+
+    def _authorized(self, path):
+        """API_KEY dari variabel lingkungan (opsional) = kunci induk untuk seluruh /api/* dan /mcp."""
+        if not API_KEY or path in ("/", "/api", "/api/health") or path.startswith("/uploads/") or path.startswith("/exports/"):
+            return True
+        return self._raw_key() == API_KEY
+
+    def _ai_access(self):
+        """Akses MCP / AI API menurut pengaturan aplikasi dan API key (Settings > API & Instance-level MCP).
+
+        Mengembalikan (settings, key_record) atau mengirim respons error dan mengembalikan (None, None)."""
+        settings = db.get_settings()
+        if not settings.get("enabled", True):
+            self._json({"error": "MCP / AI API dinonaktifkan di Settings > Instance-level MCP"}, HTTPStatus.SERVICE_UNAVAILABLE)
+            return None, None
+        raw = self._raw_key()
+        key = None
+        if raw:
+            if API_KEY and raw == API_KEY:
+                key = {"id": None, "name": "API_KEY (env)", "scopes": []}
+            else:
+                key = db.verify_api_key(raw)
+                if not key:
+                    self._json({"error": "API key tidak valid, kedaluwarsa, atau sudah dicabut"}, HTTPStatus.UNAUTHORIZED)
+                    return None, None
+        elif settings.get("require_api_key"):
+            self._json({"error": "API key wajib (header X-API-Key atau Authorization: Bearer). Buat di Settings > API."}, HTTPStatus.UNAUTHORIZED)
+            return None, None
+        return settings, key
 
     def _ai_info(self):
         base = f"http://localhost:{PORT}"
@@ -181,7 +214,8 @@ class Handler(BaseHTTPRequestHandler):
                 "example": {"method": "POST", "url": f"{base}/api/ai/tools/add_device",
                             "body": {"project_id": "<id>", "floor_id": "Lantai 1", "type": "bullet", "x_m": 3.2, "y_m": 1.5, "rotation": 135}},
             },
-            "auth": "X-API-Key" if API_KEY else "tanpa auth",
+            "auth": "X-API-Key (wajib)" if (API_KEY or db.get_settings().get("require_api_key")) else "tanpa auth (opsional X-API-Key)",
+            "settings": db.get_settings(),
             "tools": [{"name": t["name"], "description": t["description"]} for t in ai_tools.tool_specs()],
         }
 
@@ -190,6 +224,14 @@ class Handler(BaseHTTPRequestHandler):
         if not self._authorized(path):
             return self._json({"error": "API key tidak valid"}, HTTPStatus.UNAUTHORIZED)
         try:
+            if path == "/api/settings/api-keys":
+                return self._json(db.list_api_keys())
+            if path == "/api/settings/mcp":
+                return self._json({"settings": db.get_settings(), "tools": [{"name": t["name"], "description": t["description"]} for t in ai_tools.tool_specs()],
+                                   "env_api_key": bool(API_KEY), "mcp_http_url": f"http://localhost:{PORT}/mcp", "stdio_path": MCP_PATH,
+                                   "clients": len(db.list_clients())})
+            if path == "/api/settings/mcp/clients":
+                return self._json(db.list_clients())
             if path == "/api/ai/info":
                 return self._json(self._ai_info())
             if path == "/api/ai/schema":
@@ -237,18 +279,39 @@ class Handler(BaseHTTPRequestHandler):
         try:
             body = self._body()
             if path == "/mcp":
-                resp = mcp_server.handle_payload(body)
+                settings, key = self._ai_access()
+                if settings is None:
+                    return
+                ctx = {"transport": "http", "key": key, "session_id": self.headers.get("Mcp-Session-Id") or None, "settings": settings}
+                resp = mcp_server.handle_payload(body, ctx)
+                extra = {"Mcp-Session-Id": ctx["new_session"]} if ctx.get("new_session") else {}
                 if resp is None:                      # notifikasi: tanpa isi
                     self.send_response(HTTPStatus.ACCEPTED)
                     self._cors()
+                    for k, v in extra.items():
+                        self.send_header(k, v)
                     self.send_header("Content-Length", "0")
                     self.end_headers()
                     return
-                return self._json(resp)
+                return self._json(resp, extra_headers=extra)
+            if path == "/api/settings/api-keys":
+                scopes = body.get("scopes") or []
+                if scopes == "all":
+                    scopes = []
+                exp = body.get("expires_at")
+                if not exp and body.get("expires_in_days"):
+                    exp = time.time() + float(body["expires_in_days"]) * 86400
+                rec, raw = db.create_api_key(body.get("name") or "API key", scopes, float(exp) if exp else None)
+                return self._json({"key": rec, "raw_key": raw}, HTTPStatus.CREATED)
             m = re.fullmatch(r"/api/ai/tools/([A-Za-z0-9_]+)", path)
             if m:
+                settings, key = self._ai_access()
+                if settings is None:
+                    return
+                cid = "rest:" + ((key or {}).get("id") or "anon")
+                db.upsert_client(cid, "REST API" + (f" ({key['name']})" if key else " (tanpa key)"), "", "rest", (key or {}).get("id"))
                 try:
-                    return self._json({"ok": True, "result": ai_tools.call_tool(m.group(1), body)})
+                    return self._json({"ok": True, "result": mcp_server.call_tool_checked(m.group(1), body, settings, key)})
                 except ai_tools.ToolError as e:
                     return self._json({"ok": False, "error": str(e)}, HTTPStatus.BAD_REQUEST)
             if path == "/api/projects":
@@ -279,6 +342,18 @@ class Handler(BaseHTTPRequestHandler):
     def do_PUT(self):
         path, _ = self._route()
         try:
+            if path == "/api/settings/mcp":
+                body = self._body()
+                patch = {}
+                if "enabled" in body:
+                    patch["enabled"] = bool(body["enabled"])
+                if "require_api_key" in body:
+                    patch["require_api_key"] = bool(body["require_api_key"])
+                for k in ("exposed_tools", "exposed_projects"):
+                    if k in body:
+                        v = body[k]
+                        patch[k] = "all" if v == "all" else [str(x) for x in (v or [])]
+                return self._json({"settings": db.set_settings(patch)})
             m = re.fullmatch(r"/api/projects/([A-Za-z0-9_-]+)", path)
             if not m:
                 return self._json({"error": "not found"}, HTTPStatus.NOT_FOUND)
@@ -295,6 +370,14 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_DELETE(self):
         path, _ = self._route()
+        m = re.fullmatch(r"/api/settings/api-keys/([A-Za-z0-9_-]+)", path)
+        if m:
+            ok = db.delete_api_key(m.group(1))
+            return self._json({"ok": ok}) if ok else self._json({"error": "API key tidak ditemukan"}, HTTPStatus.NOT_FOUND)
+        m = re.fullmatch(r"/api/settings/mcp/clients/([A-Za-z0-9_:.-]+)", path)
+        if m:
+            ok = db.delete_client(m.group(1))
+            return self._json({"ok": ok}) if ok else self._json({"error": "klien tidak ditemukan"}, HTTPStatus.NOT_FOUND)
         m = re.fullmatch(r"/api/projects/([A-Za-z0-9_-]+)", path)
         if not m:
             return self._json({"error": "not found"}, HTTPStatus.NOT_FOUND)

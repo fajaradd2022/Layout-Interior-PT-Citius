@@ -58,8 +58,21 @@ Tool: `list_projects`, `get_project`, `get_project_summary`, `create_project`, `
 Posisi dalam meter (`x_m`, `y_m`) dari sudut kiri-atas gambar, atau piksel (`x_px`, `y_px`).
 Frontend memantau perubahan dari server tiap 5 detik, jadi hasil kerja AI langsung tampil.
 
-Keamanan: default tanpa auth. Bila backend diakses dari luar, set variabel lingkungan `API_KEY`; klien wajib
-mengirim header `X-API-Key: <kunci>` (atau `Authorization: Bearer <kunci>`) untuk `/api/*` dan `/mcp`.
+**Pengaturan dari aplikasi (Settings di topbar)**
+
+- **API** (`/settings`): buat API key dengan label, masa berlaku (never / 7 / 30 / 90 / 180 / 365 hari / tanggal), dan
+  scope (semua tool atau pilih tool). Key ditampilkan sekali; disimpan sebagai hash SHA-256 (tabel `api_keys`).
+  Daftar menampilkan 4 karakter terakhir, jumlah scope, kedaluwarsa, dan terakhir dipakai; key bisa dihapus (dicabut).
+- **Instance-level MCP** (`/settings/mcp`): status Enabled/Disabled (mematikan `/mcp` dan `/api/ai/*`), tombol
+  **Connect** dengan langkah per klien (Claude Desktop, Claude Code, Cursor, klien HTTP, OpenAI function calling),
+  **Tools exposed** dan **Projects exposed** (membatasi tool/proyek yang bisa dipakai klien; proyek baru buatan klien
+  otomatis ditambahkan), **Require API key** (wajib `X-API-Key` / `Bearer` untuk MCP HTTP dan REST; stdio lokal bebas),
+  dan **Connected clients** (klien yang pernah `initialize`/memanggil tool: nama, versi, transport, key, jumlah request).
+- Endpoint: `GET/POST /api/settings/api-keys`, `DELETE /api/settings/api-keys/{id}`, `GET/PUT /api/settings/mcp`,
+  `GET /api/settings/mcp/clients`, `DELETE /api/settings/mcp/clients/{id}`.
+
+Keamanan: default tanpa auth. Aktifkan **Require API key** di Settings bila backend diakses dari luar, atau set
+variabel lingkungan `API_KEY` sebagai kunci induk untuk seluruh `/api/*` dan `/mcp`.
 
 ## Skema SQLite
 
