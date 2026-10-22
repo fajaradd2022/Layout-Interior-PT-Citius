@@ -1,0 +1,30 @@
+# Dashboard Layout Interior - PT Citius
+# Jalankan:  docker compose up -d --build
+# Frontend : http://localhost:3000   (proxy /api dan /uploads ke backend, tanpa CORS)
+# Backend  : http://localhost:8800   (API + SQLite, data di volume ./backend/data)
+services:
+  backend:
+    build: ./backend
+    container_name: layout-interior-backend
+    environment:
+      HOST: 0.0.0.0
+      PORT: "8800"
+    volumes:
+      - ./backend/data:/app/data
+    ports:
+      - "${BACKEND_PORT:-8800}:8800"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./dashboard-layout-interior
+      args:
+        # kosong = browser memanggil origin frontend; Next mem-proxy ke BACKEND_URL
+        NEXT_PUBLIC_API_BASE: "${NEXT_PUBLIC_API_BASE:-}"
+        BACKEND_URL: http://backend:8800
+    container_name: layout-interior-frontend
+    depends_on:
+      - backend
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    restart: unless-stopped

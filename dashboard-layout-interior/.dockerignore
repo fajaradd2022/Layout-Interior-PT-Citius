@@ -1,0 +1,10 @@
+node_modules
+.next
+out
+.git
+.gitignore
+*.md
+.env*
+!.env.example
+tsconfig.tsbuildinfo
+npm-debug.log*
