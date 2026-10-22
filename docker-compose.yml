@@ -9,6 +9,8 @@ services:
     environment:
       HOST: 0.0.0.0
       PORT: "8800"
+      # alamat publik aplikasi (mis. https://layout.contoh.com) agar Settings menampilkan URL MCP yang benar
+      PUBLIC_URL: "${PUBLIC_URL:-}"
     volumes:
       - ./backend/data:/app/data
     ports:
@@ -27,4 +29,18 @@ services:
       - backend
     ports:
       - "${FRONTEND_PORT:-3000}:3000"
+    restart: unless-stopped
+
+  # Opsional: Cloudflare Tunnel (jalankan dengan `docker compose --profile tunnel up -d`).
+  # Isi TUNNEL_TOKEN di .env dari Zero Trust > Networks > Tunnels. Public hostname tunnel diarahkan ke
+  # http://frontend:3000 (satu hostname untuk aplikasi + /mcp + /api). Lihat README bagian "Cloudflare Tunnel".
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: layout-interior-tunnel
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: "${TUNNEL_TOKEN:-}"
+    depends_on:
+      - frontend
+    profiles: ["tunnel"]
     restart: unless-stopped

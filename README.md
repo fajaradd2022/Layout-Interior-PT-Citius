@@ -68,10 +68,76 @@ docker build -t layout-interior-frontend --build-arg BACKEND_URL=http://backend:
 
 Variabel build frontend: `NEXT_PUBLIC_API_BASE` (alamat backend untuk browser; kosong = origin yang sama lewat proxy)
 dan `BACKEND_URL` (tujuan proxy sisi server). Variabel runtime backend: `HOST` (default `127.0.0.1`, Docker `0.0.0.0`),
-`PORT` (default `8800`).
+`PORT` (default `8800`), `PUBLIC_URL` (alamat publik untuk URL MCP di Settings, opsional), `API_KEY` (kunci induk, opsional).
 
 Deploy di server tanpa domain: cukup `docker compose up -d --build`, lalu buka `http://IP-SERVER:3000`.
-Untuk domain + HTTPS, letakkan reverse proxy (Nginx / Caddy / Traefik) di depan port 3000.
+Untuk domain + HTTPS, letakkan reverse proxy (Nginx / Caddy / Traefik) di depan port 3000, atau pakai Cloudflare Tunnel
+(bagian berikut). Satu origin frontend sudah meneruskan `/api/*`, `/uploads/*`, `/exports/*`, dan `/mcp` ke backend.
+
+## Akses publik lewat Cloudflare Tunnel (termasuk MCP)
+
+Arahkan **satu** public hostname tunnel (mis. `layout.contoh.com`) ke frontend, bukan ke backend:
+
+| Di Zero Trust > Networks > Tunnels > Public Hostname | Nilai |
+|---|---|
+| Service type | HTTP |
+| URL (cloudflared di compose, profil `tunnel`) | `frontend:3000` |
+| URL (cloudflared di host / Windows) | `localhost:3000` |
+
+Lalu di `.env` isi `PUBLIC_URL=https://layout.contoh.com` (agar Settings > Instance-level MCP menampilkan URL publik) dan,
+bila cloudflared ingin ikut di compose, `TUNNEL_TOKEN=...` kemudian `docker compose --profile tunnel up -d --build`.
+Setelah mengubah `next.config.ts` / `.env`, bangun ulang frontend: `docker compose up -d --build frontend`.
+
+### Cloudflare memblokir klien MCP (403 `Cf-Mitigated: challenge`, halaman "Just a moment...")
+
+Klien MCP (Claude Code, Cursor, n8n, curl) bukan browser, sehingga **Managed Challenge** Cloudflare tidak bisa mereka lewati.
+Gejala: `curl -X POST https://layout.contoh.com/mcp` menjawab `403` dengan header `Cf-Mitigated: challenge`. Perbaiki di
+dashboard Cloudflare (pilih domain):
+
+1. **Security > Settings**: pastikan *I'm Under Attack Mode* mati dan *Security level* bukan "I'm Under Attack".
+2. **Security > Bots**: matikan **Bot Fight Mode** (paket Free tidak bisa mengecualikan path dari Bot Fight Mode; pada paket
+   Pro ke atas, *Super Bot Fight Mode* > *Definitely automated* = Allow, atau pakai aturan Skip di langkah 3).
+3. **Security > WAF > Custom rules > Create rule** (taruh paling atas):
+   - Rule name: `Izinkan MCP & AI API`
+   - Expression (Edit expression):
+     ```
+     (http.request.uri.path eq "/mcp") or (starts_with(http.request.uri.path, "/mcp/")) or
+     (starts_with(http.request.uri.path, "/api/ai/")) or (http.request.uri.path eq "/api/health")
+     ```
+   - Action: **Skip** → centang *All remaining custom rules*, dan pada *WAF components to skip*: Security Level,
+     Browser Integrity Check, Rate limiting rules, Managed rules, serta Super Bot Fight Mode bila tersedia.
+4. Bila ada aturan lain yang menantang semua request (Security > WAF > Custom rules / Rate limiting / Page Rules /
+   Configuration Rules "Security Level"), pastikan aturan Skip di atas berada di urutan pertama.
+
+Uji dari terminal mana pun (tanpa API key bila *Require API key* mati):
+
+```bash
+curl -i -X POST https://layout.contoh.com/mcp -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" -H "X-API-Key: li_xxx" -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
+Gunakan path `/mcp` persis (tanpa garis miring di akhir; `/mcp/` dijawab redirect 308 oleh Next.js).
+Jawaban yang benar: `HTTP/1.1 200` berisi JSON `{"jsonrpc":"2.0","id":1,"result":{"tools":[...]}}`. Jika masih muncul
+`Cf-Mitigated: challenge`, aturan Cloudflare belum berlaku (tunggu ±1 menit). Jika jawabannya halaman HTML Next.js 404,
+frontend belum dibangun ulang dengan `next.config.ts` terbaru. Jika `401`/`403` JSON dari aplikasi, periksa API key.
+
+Konfigurasi klien, mis. Claude Code (`.mcp.json` di folder proyek, key dibuat di Settings > API):
+
+```json
+{
+  "mcpServers": {
+    "layout-interior": {
+      "type": "http",
+      "url": "https://layout.contoh.com/mcp",
+      "headers": { "X-API-Key": "${LAYOUT_API_KEY}" }
+    }
+  }
+}
+```
+
+Jalan yang lebih aman daripada membuka `/mcp` ke publik: wajibkan API key (Settings > Instance-level MCP > *Require API key*)
+dan/atau lindungi hostname dengan **Cloudflare Access** memakai *Service Token*; klien lalu mengirim header
+`CF-Access-Client-Id` dan `CF-Access-Client-Secret` (Claude Code: `claude mcp add --transport http layout-interior
+https://layout.contoh.com/mcp --header "CF-Access-Client-Id: ..." --header "CF-Access-Client-Secret: ..."`).
 
 ## Struktur repo
 

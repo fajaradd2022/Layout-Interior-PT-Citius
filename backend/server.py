@@ -54,6 +54,7 @@ PORT = int(os.environ.get("PORT", "8800"))
 HOST = os.environ.get("HOST", "127.0.0.1")   # Docker: HOST=0.0.0.0
 MAX_BODY = 60 * 1024 * 1024
 API_KEY = os.environ.get("API_KEY", "")   # opsional: bila diisi, /api/* dan /mcp wajib header X-API-Key / Bearer
+PUBLIC_URL = os.environ.get("PUBLIC_URL", "").rstrip("/")  # opsional: alamat publik (mis. https://layout.contoh.com) untuk URL MCP di Settings
 MCP_PATH = os.path.join(HERE, "mcp_server.py")
 MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".svg": "image/svg+xml", ".gif": "image/gif"}
 
@@ -114,7 +115,7 @@ class Handler(BaseHTTPRequestHandler):
     def _cors(self):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-API-Key, X-Session, Authorization, MCP-Protocol-Version, Mcp-Session-Id")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-API-Key, X-Session, Authorization, MCP-Protocol-Version, Mcp-Session-Id, X-Public-Origin")
         self.send_header("Access-Control-Expose-Headers", "Content-Disposition")
 
     def _json(self, obj, status=HTTPStatus.OK, extra_headers=None):
@@ -225,8 +226,22 @@ class Handler(BaseHTTPRequestHandler):
             return None, None
         return settings, key
 
+    def _public_base(self):
+        """Alamat dasar yang dipakai klien luar: PUBLIC_URL > header X-Public-Origin (dikirim frontend) >
+        X-Forwarded-Proto/Host (reverse proxy / Cloudflare Tunnel) > http://localhost:PORT."""
+        if PUBLIC_URL:
+            return PUBLIC_URL
+        origin = (self.headers.get("X-Public-Origin") or "").strip().rstrip("/")
+        if re.fullmatch(r"https?://[A-Za-z0-9.\-]+(:\d+)?", origin):
+            return origin
+        fhost = (self.headers.get("X-Forwarded-Host") or "").split(",")[0].strip()
+        if fhost:
+            proto = (self.headers.get("X-Forwarded-Proto") or "https").split(",")[0].strip()
+            return f"{proto}://{fhost}"
+        return f"http://localhost:{PORT}"
+
     def _ai_info(self):
-        base = f"http://localhost:{PORT}"
+        base = self._public_base()
         return {
             "name": mcp_server.SERVER_INFO["name"],
             "mcp": {
@@ -265,7 +280,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(db.list_api_keys())
             if path == "/api/settings/mcp":
                 return self._json({"settings": db.get_settings(), "tools": [{"name": t["name"], "description": t["description"]} for t in ai_tools.tool_specs()],
-                                   "env_api_key": bool(API_KEY), "mcp_http_url": f"http://localhost:{PORT}/mcp", "stdio_path": MCP_PATH,
+                                   "env_api_key": bool(API_KEY), "mcp_http_url": f"{self._public_base()}/mcp", "stdio_path": MCP_PATH,
                                    "clients": len(db.list_clients())})
             if path == "/api/settings/mcp/clients":
                 return self._json(db.list_clients())
@@ -273,8 +288,18 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(self._ai_info())
             if path == "/api/ai/schema":
                 return self._json({"tools": ai_tools.tool_specs(), "openai_functions": ai_tools.openai_functions()})
-            if path == "/mcp":
-                return self._json({"mcp": "POST JSON-RPC 2.0 ke endpoint ini (Streamable HTTP, stateless)", "stdio": MCP_PATH})
+            if path in ("/mcp", "/sse"):
+                # Klien Streamable HTTP membuka GET untuk aliran SSE; server ini stateless, jawab 405 agar klien
+                # lanjut memakai POST saja. Browser / curl biasa mendapat petunjuk JSON.
+                if "text/event-stream" in (self.headers.get("Accept") or "") or path == "/sse":
+                    self.send_response(HTTPStatus.METHOD_NOT_ALLOWED)
+                    self._cors()
+                    self.send_header("Allow", "POST")
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                return self._json({"mcp": "POST JSON-RPC 2.0 ke endpoint ini (Streamable HTTP, stateless)",
+                                   "url": f"{self._public_base()}/mcp", "stdio": MCP_PATH})
             m = re.fullmatch(r"/exports/([A-Za-z0-9_.-]+)", path)
             if m:
                 fp = os.path.join(ai_tools.EXPORT_DIR, m.group(1))
@@ -441,6 +466,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_DELETE(self):
         path, _ = self._route()
+        if path == "/mcp":                      # klien MCP menutup sesi: tidak ada state di server
+            self.send_response(HTTPStatus.NO_CONTENT)
+            self._cors()
+            self.end_headers()
+            return
         user = self._guard(path)
         if user is None:
             return

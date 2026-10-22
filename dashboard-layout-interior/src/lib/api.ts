@@ -50,7 +50,11 @@ export function clearToken() {
 }
 export function authHeaders(): Record<string, string> {
   const t = getToken();
-  return t ? { Authorization: `Bearer ${t}` } : {};
+  const h: Record<string, string> = t ? { Authorization: `Bearer ${t}` } : {};
+  // Origin yang dilihat browser (mis. https://layout.contoh.com lewat Cloudflare Tunnel) agar backend
+  // menampilkan URL MCP publik di Settings, bukan http://localhost:8800.
+  if (typeof window !== "undefined" && !API_BASE) h["X-Public-Origin"] = window.location.origin;
+  return h;
 }
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {

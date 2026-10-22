@@ -182,6 +182,24 @@ Hasil PDF muncul di folder `C:\Users\WELCOME\Downloads\Layout Lt 1-5 Kantor PT C
 3. Coba minta AI: "list proyek", "tambahkan kamera bullet di Lantai 1 posisi 3 m, 2 m menghadap 135°",
    "buat PDF plan wiring CCTV". Perubahan muncul di aplikasi dalam ±5 detik.
 
+### 6.1 MCP lewat internet (Cloudflare Tunnel)
+
+Bila aplikasi dipublikasikan lewat Cloudflare Tunnel (mis. `https://layout.contoh.com`), endpoint MCP-nya adalah
+`https://layout.contoh.com/mcp` (frontend meneruskannya ke backend; pastikan tunnel menunjuk ke port **3000** dan
+frontend sudah dibangun ulang dengan `next.config.ts` terbaru). Error paling umum: Cloudflare menjawab **403** dengan
+header `Cf-Mitigated: challenge` ("Just a moment..."). Artinya Bot Fight Mode / Managed Challenge menahan klien MCP
+karena bukan browser. Perbaikannya di dashboard Cloudflare, bukan di kode:
+
+1. Security > Settings: matikan *I'm Under Attack Mode*.
+2. Security > Bots: matikan *Bot Fight Mode* (paket Free tidak bisa mengecualikan path tertentu).
+3. Security > WAF > Custom rules: buat aturan **Skip** paling atas untuk path `/mcp`, `/mcp/*`, `/api/ai/*`
+   (expression dan komponen yang dilewati ada di `README.md` bagian "Cloudflare memblokir klien MCP").
+4. Uji: `curl -i -X POST https://layout.contoh.com/mcp -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"ping"}'`
+   harus `200` JSON, bukan `403` HTML.
+5. Isi `PUBLIC_URL=https://layout.contoh.com` di `.env` server agar halaman Settings > Instance-level MCP > Connect
+   menampilkan URL publik; buat API key di Settings > API dan aktifkan *Require API key* supaya endpoint tidak terbuka
+   untuk siapa saja.
+
 ## 7. Simpan perubahan ke GitHub
 
 Dari terminal VS Code di folder repo (`Layout Interior PT Citius`):
