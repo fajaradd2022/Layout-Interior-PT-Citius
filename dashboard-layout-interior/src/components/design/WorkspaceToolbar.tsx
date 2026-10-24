@@ -72,7 +72,7 @@ export function WorkspaceToolbar({ onAddFloor }: { onAddFloor: () => void }) {
   const active = floors.find((f) => f.id === activeId);
 
   return (
-    <div className="flex h-12 shrink-0 items-center gap-2 border-b bg-card px-3">
+    <div className="flex min-h-12 shrink-0 items-center gap-2 border-b bg-card px-3 py-1.5">
       {/* tools */}
       <div className="flex items-center gap-0.5 rounded-lg bg-muted p-0.5">
         {TOOLS.map((t) => {
@@ -225,8 +225,8 @@ export function WorkspaceToolbar({ onAddFloor }: { onAddFloor: () => void }) {
 
       <Separator orientation="vertical" className="mx-1 h-6" />
 
-      {/* floors */}
-      <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+      {/* floors: tab turun ke baris baru bila tidak muat, supaya tidak ada lantai yang tersembunyi */}
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
         {floors.map((f) => (
           <button
             key={f.id}

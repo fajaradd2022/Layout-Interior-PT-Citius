@@ -60,11 +60,22 @@ DATA_TYPES = {"lan", "router", "modem"} | CAM_TYPES
 CABLE_STYLE = {  # jenis kabel yang digambar di aplikasi -> warna, pola, nama
     "power": (RED, None, "Kabel listrik NYM 3 x 2,5 mm\u00b2"),
     "data": (BLUE, "[3 2] 0", "UTP Cat6"),
-    "fiber": (GREEN, "[4 2 1 2] 0", "Fiber OM3 / drop cable"),
+    "fiber": (GREEN, "[4 2 1 2] 0", "Drop cable fiber ISP"),
     "coax": (ORANGE, "[2 2] 0", "Coaxial RG6"),
     "other": (GRAY, "[1 2] 0", "Kabel lain"),
 }
-CABLE_CATS = {"power": {"sk", "all"}, "data": {"lan", "cctv", "wifi", "all"}, "fiber": {"modem", "all"}, "coax": {"cctv", "all"}, "other": {"all"}}
+# uplink antar lantai memakai UTP Cat6 (data), jadi kabel data juga dihitung di halaman Modem / Backbone
+CABLE_CATS = {"power": {"sk", "all"}, "data": {"lan", "cctv", "wifi", "modem", "all"}, "fiber": {"modem", "all"}, "coax": {"cctv", "all"}, "other": {"all"}}
+
+
+def switch_kind(d):
+    """'Switch 16p unmanaged' / 'Switch PoE 8p unmanaged' dari properti perangkat switch."""
+    return f"Switch{' PoE' if d.get('poe') else ''} {d.get('ports', 24)}p{' managed' if d.get('managed') else ' unmanaged'}"
+
+
+def cam_kind(d):
+    """Nama jenis kamera: properti 'form' (mis. 'dome indoor', 'bullet outdoor IP67') bila ada, selain itu dari tipe."""
+    return f"Kamera {d['form']}" if d.get("form") else TYPE_NAME[d["type"]]
 
 
 def _poly_len(points):
@@ -207,12 +218,14 @@ def compute_runs(floor, cat):
     cidx = _cable_index(floor)
     labels = {d["id"]: d.get("label") or d["type"] for d in devs}
     runs = []
+    used_cab = set()
     for d in devs:
         t = d["type"]
         if t not in C["types"] or t in ("switch", "panel", "chair", "desk"):
             continue
         cab = cidx.get(d["id"])
         if cab:  # jalur digambar manual di aplikasi: pakai panjang jalurnya
+            used_cab.add(cab["id"])
             other = cab["toId"] if cab.get("fromId") == d["id"] else cab.get("fromId")
             horiz = _poly_len(cab["points"]) * cmpx
             drop = float(cab.get("extraM") or 0) * 100
@@ -239,15 +252,23 @@ def compute_runs(floor, cat):
                          horiz=horiz / 100, drop=drop / 100, total=total, conduit=_r05((branch + drop) / 100),
                          cable=CABLE.get(t, "UTP Cat6"), note=d.get("note") or "",
                          dst=TYPE_NAME.get(t, t)))
-    # jalur kabel yang tidak tersambung ke perangkat kategori ini (mis. trunk/backbone yang digambar bebas)
+    # kabel lain: tarikan tambahan ke titik yang sama (mis. faceplate 2 port = 2 kabel) dihitung sebagai jenis titik itu;
+    # kabel yang tidak tersambung ke titik kategori ini (uplink, link rak, trunk) dihitung sebagai 'cable'
     used = {r["id"] for r in runs}
+    types = {d["id"]: d["type"] for d in devs}
     for cab in floor.get("cables") or []:
-        if cat not in CABLE_CATS.get(cab.get("type"), {"all"}):
+        if cab["id"] in used_cab or cat not in CABLE_CATS.get(cab.get("type"), {"all"}):
             continue
-        if cab.get("fromId") in used or cab.get("toId") in used:
-            continue
+        end = cab.get("toId") if cab.get("toId") in used else cab.get("fromId") if cab.get("fromId") in used else None
         horiz = _poly_len(cab["points"]) * cmpx
         drop = float(cab.get("extraM") or 0) * 100
+        if end:
+            other = cab.get("fromId") if end == cab.get("toId") else cab.get("toId")
+            runs.append(dict(id=cab["id"], label=cab.get("label") or labels.get(end), type=types[end], src=labels.get(other, "ujung jalur"), src_dev=None,
+                             horiz=horiz / 100, drop=drop / 100, total=_r05((horiz + drop) / 100 * SPARE), conduit=0.0,
+                             cable=CABLE_STYLE.get(cab.get("type"), CABLE_STYLE["other"])[2], note=f"jalur {cab.get('label', '')} (tarikan tambahan, satu conduit)",
+                             dst=TYPE_NAME.get(types[end], types[end])))
+            continue
         runs.append(dict(id=cab["id"], label=cab.get("label") or "Kabel", type="cable", src=labels.get(cab.get("fromId"), "-"), src_dev=None,
                          horiz=horiz / 100, drop=drop / 100, total=_r05((horiz + drop) / 100 * SPARE), conduit=_r05((horiz + drop) / 100),
                          cable=CABLE_STYLE.get(cab.get("type"), CABLE_STYLE["other"])[2], note=(cab.get("note") or "jalur digambar"),
@@ -395,18 +416,20 @@ SPEC = {
            "- Satu grup MCB 16 A maksimal 8 titik; outlet rak/switch dan beban khusus di grup tersendiri. Semua outlet memakai grounding.\n"
            "- Bila panel MCB belum ditempatkan di denah, tambahkan perangkat 'Panel MCB' agar jalur dan panjang kabel terhitung."),
     "lan": ("WIRING PORT LAN\n"
-            "- Satu tarikan UTP Cat6 per port dari switch/patch panel terdekat ke outlet RJ45 (maks 90 m); kolom 'ID kabel' adalah label port switch.\n"
-            "- Trunk di tray kabel atas plafon, cabang turun lewat dinding / floor box. Uji sertifikasi tiap tarikan setelah terminasi."),
+            "- Satu tarikan UTP Cat6 solid copper per port: faceplate RJ45 -> patch panel rak -> patch cord 1 m -> switch biasa (unmanaged, non-PoE).\n"
+            "- Nomor port switch / patch panel tiap titik ada di kolom Keterangan. Trunk di tray atas plafon, cabang turun lewat dinding / floor box.\n"
+            "- Uji sertifikasi (Fluke) tiap tarikan setelah terminasi; maks 90 m."),
     "cctv": ("WIRING CCTV\n"
-             "- Kamera IP PoE, satu kabel UTP Cat6 per kamera ke switch PoE terdekat (garis biru putus-putus); NVR di rak utama.\n"
-             "- Arsiran = area pandang kamera (FOV & jarak sesuai properti); dinding yang digambar tidak dihitung sebagai penghalang di PDF ini.\n"
-             "- Kamera outdoor memakai junction box tahan air dan surge protector PoE."),
+             "- Kamera IP PoE, satu kabel UTP Cat6 per kamera ke switch PoE+ unmanaged di rak lantai (nomor port di kolom Ket.).\n"
+             "- SW-PoE disambung ke switch biasa lantai, lalu uplink UTP Cat6 ke core switch Lt 2; NVR di rak utama Lt 2.\n"
+             "- Arsiran = area pandang kamera. Kamera outdoor memakai junction box IP66 dan surge protector PoE."),
     "wifi": ("WIRING WIFI ROUTER / ACCESS POINT\n"
-             "- Satu kabel UTP Cat6 per AP dari switch PoE+ terdekat ke titik AP di plafon; lingkaran hijau = radius jangkauan sesuai properti.\n"
-             "- SSID / band sesuai tabel; AP dikelola terpusat (controller), VLAN staff & guest terpisah."),
+             "- Satu kabel UTP Cat6 per AP dari switch PoE+ unmanaged di rak lantai (nomor port di kolom Ket.); lingkaran hijau = radius jangkauan.\n"
+             "- AP standalone (diatur per unit, tanpa controller); SSID & kanal sesuai tabel."),
     "modem": ("MODEM / BACKBONE\n"
-              "- Modem/ONT ISP terhubung ke router/firewall lalu ke switch utama (garis ungu). Switch tiap lantai di-uplink ke switch utama lewat riser.\n"
-              "- Rak utama memakai UPS; catu daya rak dari grup MCB khusus."),
+              "- Modem/ONT ISP -> router/firewall dual WAN -> core switch Lt 2 (port 17). Drop cable fiber ISP disediakan ISP.\n"
+              "- Tiap lantai: switch biasa (port 16) di-uplink UTP Cat6 lewat riser ke core switch Lt 2 (port 21-24); SW-PoE lantai disambung ke switch biasa.\n"
+              "- Semua switch unmanaged. Rak memakai UPS; catu daya rak dari grup MCB khusus."),
 }
 
 
@@ -466,11 +489,11 @@ def draw_floor_page(doc, project, floor, cat, idx):
     elif cat == "lan":
         rows = [[d.get("label", ""), f"{d.get('ports', 1)} port", f"{d.get('heightCm', 30):.0f}", d.get("cableId", ""), pos(d), ln(d), d.get("note", "")]
                 for d in sel if d["type"] == "lan"]
-        rows += [[d.get("label", ""), f"Switch {d.get('ports', 24)}p{' PoE' if d.get('poe') else ''}", "-", "-", pos(d), "-", d.get("note", "")] for d in switches]
+        rows += [[d.get("label", ""), switch_kind(d), "-", "-", pos(d), "-", d.get("note", "")] for d in switches]
         hdr, wd = ["Label", "Jenis", "Tinggi", "ID kabel / port", "Posisi (m)", "Kabel (m)", "Keterangan"], [56, 60, 34, 70, 60, 40, tw - 320]
         ttl = f"Daftar Titik Port LAN {name} ({sum(1 for d in sel if d['type'] == 'lan')} titik)"
     elif cat == "cctv":
-        rows = [[d.get("label", ""), TYPE_NAME[d["type"]], f"{d.get('resolution', '')}, {d.get('lensMm', '')} mm",
+        rows = [[d.get("label", ""), cam_kind(d), f"{d.get('resolution', '')}, {d.get('lensMm', '')} mm",
                  f"{d.get('fovDeg', 0):.0f}° / {d.get('rangeM', 0):.0f} m", f"{d.get('heightCm', 300):.0f}", pos(d), ln(d), d.get("note", "")]
                 for d in sel if d["type"] in CAM_TYPES]
         hdr, wd = ["Label", "Tipe", "Resolusi / lensa", "FOV / jarak", "Tinggi", "Posisi (m)", "Kabel (m)", "Ket."], [50, 60, 70, 56, 34, 56, 38, tw - 364]
@@ -482,7 +505,7 @@ def draw_floor_page(doc, project, floor, cat, idx):
         ttl = f"Daftar Titik Wifi Router / AP {name} ({len(rows)} unit)"
     elif cat == "modem":
         rows = [[d.get("label", ""), "Modem / ONT", d.get("isp", ""), f"{d.get('heightCm', 150):.0f}", pos(d), d.get("note", "")] for d in sel if d["type"] == "modem"]
-        rows += [[d.get("label", ""), f"Switch {d.get('ports', 24)}p{' PoE' if d.get('poe') else ''}{', rak' if d.get('rackMounted') else ''}", "-", "-", pos(d), d.get("note", "")] for d in switches]
+        rows += [[d.get("label", ""), switch_kind(d) + (", rak" if d.get("rackMounted") else ""), "-", "-", pos(d), d.get("note", "")] for d in switches]
         hdr, wd = ["Label", "Jenis", "ISP", "Tinggi", "Posisi (m)", "Keterangan"], [56, 90, 60, 34, 60, tw - 300]
         ttl = f"Modem & Backbone {name}"
     else:
@@ -536,14 +559,14 @@ SURVEY_ITEMS = [
 CONNECTIONS = {
     "sk": ["Panel utama -> feeder -> panel MCB tiap lantai -> grup MCB 16 A -> maks 8 stop kontak per grup.",
            "Outlet rak/switch dan beban khusus (ATM, pompa, pantry) di grup tersendiri (RCBO untuk area basah/outdoor)."],
-    "lan": ["Outlet RJ45 -> UTP Cat6 (< 90 m) -> patch panel -> patch cord -> switch lantai -> uplink -> switch utama -> router -> ISP.",
-            "Kolom ID kabel pada tabel dipakai sebagai label outlet dan port switch."],
-    "cctv": ["Kamera IP PoE -> UTP Cat6 -> switch PoE lantai (VLAN CCTV) -> switch utama -> NVR; monitor & akses remote via router.",
-             "Budget PoE switch dihitung dari jumlah kamera x daya kamera (±7-13 W)."],
-    "wifi": ["AP -> UTP Cat6 -> switch PoE+ (802.3at) -> switch utama -> router (gateway); controller terpusat, SSID staff & guest.",
-             "Kanal 2.4 GHz 1/6/11 dan 5 GHz dibedakan antar AP yang bertetangga."],
-    "modem": ["ODP ISP -> drop cable fiber -> modem/ONT -> router/firewall (dual WAN bila 2 ISP) -> switch utama -> switch lantai.",
-              "Rak utama memakai UPS dan grounding; catu daya dari grup MCB khusus."],
+    "lan": ["Faceplate RJ45 -> UTP Cat6 (< 90 m) -> patch panel -> patch cord 1 m -> switch biasa lantai (unmanaged) -> uplink UTP Cat6 via riser -> core switch Lt 2 -> router -> ISP.",
+            "Nomor port patch panel = nomor port switch; tertulis di kolom Keterangan tiap titik dan dipakai sebagai label kabel."],
+    "cctv": ["Kamera IP PoE -> UTP Cat6 -> switch PoE+ lantai (unmanaged) -> switch biasa lantai -> uplink UTP Cat6 -> core switch Lt 2 -> NVR; akses remote via router.",
+             "Semua switch unmanaged (tanpa VLAN): jaringan CCTV tidak dipisah per VLAN. Budget PoE = jumlah kamera x ±7 W + AP x 25,5 W."],
+    "wifi": ["AP -> UTP Cat6 -> switch PoE+ (802.3at, unmanaged) -> switch biasa lantai -> uplink UTP Cat6 -> core switch Lt 2 -> router (gateway, DHCP).",
+             "AP standalone tanpa controller; kanal 2.4 GHz 1/6/11 dan 5 GHz dibedakan antar AP yang bertetangga."],
+    "modem": ["ODP ISP -> drop cable fiber (ISP) -> modem/ONT -> router/firewall dual WAN (failover) -> core switch Lt 2 -> uplink UTP Cat6 via riser -> switch biasa tiap lantai.",
+              "Uplink Cat6 18-22 m (batas 90 m). Rak utama memakai UPS dan grounding; catu daya dari grup MCB khusus."],
 }
 CONNECTIONS["all"] = CONNECTIONS["sk"][:1] + CONNECTIONS["lan"][:1] + CONNECTIONS["cctv"][:1] + CONNECTIONS["wifi"][:1] + CONNECTIONS["modem"][:1]
 
@@ -584,26 +607,43 @@ def material_list(cat, Q, floors):
     if types & DATA_TYPES:
         if "lan" in types:
             add("Kabel UTP Cat6 (port LAN)", cab("lan"), "m", "satu tarikan per port + cadangan 10 %")
-            add("Faceplate + keystone RJ45 Cat6", tot("lan"), "set", "jumlah port sesuai properti faceplate")
+            add("Faceplate RJ45 (1-2 port)", tot("lan"), "bh", "inbow / floor box")
+            add("Keystone jack RJ45 Cat6", sum(int(d.get("ports") or 1) for d in devs if d["type"] == "lan"), "bh", "1 per port, sesuai properti faceplate")
         if types & CAM_TYPES:
             add("Kabel UTP Cat6 (CCTV)", cab("bullet", "ptz", "fisheye"), "m", "kamera -> switch PoE")
-            add("Kamera bullet / fixed IP PoE", n("bullet"), "unit", "")
-            add("Kamera PTZ IP PoE+", n("ptz"), "unit", "")
-            add("Kamera fisheye / panoramic", n("fisheye"), "unit", "")
+            kinds = {}
+            for d in devs:
+                if d["type"] in CAM_TYPES:
+                    kinds[cam_kind(d)] = kinds.get(cam_kind(d), 0) + 1
+            for kind, cnt in sorted(kinds.items()):
+                add(f"{kind} IP PoE", cnt, "unit", "")
             add("Junction box kamera", n("bullet") + n("ptz") + n("fisheye"), "bh", "outdoor: IP66")
             if cat in ("cctv", "all"):
                 add("NVR + HDD (retensi 30 hari) + monitor", 1, "set", "kapasitas kanal >= jumlah kamera")
         if "router" in types:
             add("Kabel UTP Cat6 (AP)", cab("router"), "m", "AP -> switch PoE+")
-            add("Access point / wifi router (ceiling mount)", n("router"), "unit", "band & SSID sesuai tabel")
+            add("Access point Wi-Fi (standalone)", n("router"), "unit", "band & SSID sesuai tabel, tanpa controller")
         if "modem" in types:
             add("Modem / ONT ISP", n("modem"), "unit", "disediakan ISP (konfirmasi)")
-            add("Router / firewall", 1, "unit", "dual WAN bila 2 ISP")
-        n_ports = tot("lan") + n("bullet") + n("ptz") + n("fisheye") + n("router")
-        add("Patch cord Cat6 1-2 m", 2 * n_ports, "bh", "sisi rak & sisi perangkat")
-        add("Patch panel Cat6 24 port", max(1, math.ceil(n_ports / 24)), "bh", "")
-        add("Switch (sesuai perangkat Switch di denah)", n("switch"), "unit", "port & PoE sesuai properti")
-        add("Rak / kabinet switch wall-mount 6-12U", max(1, n("switch")), "unit", "PDU, grounding")
+            add("Router / firewall dual WAN", 1, "unit", "failover ISP, firewall, DHCP")
+        uplink = _r05(sum(r["total"] for i in Q for r in Q[i]["runs"] if r["type"] == "cable" and str(r["label"]).startswith("UPL-")))
+        if uplink:
+            add("Kabel UTP Cat6 (uplink lantai -> core Lt 2)", uplink, "m", "via riser, < 90 m; dihitung sekali di BoQ")
+        sws = [d for d in devs if d["type"] == "switch"]
+        groups = {}
+        for d in sws:
+            groups[switch_kind(d)] = groups.get(switch_kind(d), 0) + 1
+        for kind, cnt in sorted(groups.items()):
+            add(kind, cnt, "unit", "sesuai label & port di tabel per lantai")
+        racks = [d for d in sws if not d.get("poe")] or sws
+        lan_ports = sum(int(d.get("ports") or 1) for d in devs if d["type"] == "lan" and "lan" in types)
+        n_ports = lan_ports + n("bullet") + n("ptz") + n("fisheye") + n("router")
+        n_upl = sum(1 for d in racks if "Core" not in (d.get("label") or ""))
+        n_core = sum(1 for d in racks if "Core" in (d.get("label") or ""))
+        add("Patch cord Cat6 1 m (sisi rak)", n_ports + n("modem") + (len(sws) - len(racks)) + n_upl + (n_upl if n_core else 0), "bh",
+            "titik sistem ini + link SW-PoE + uplink (kedua rak); total gabungan semua sistem lihat BoQ")
+        add("Patch panel Cat6 24 port + cable manager", max(1, len(racks)), "bh", "1 per rak lantai")
+        add("Rak / kabinet switch wall-mount 6-12U", max(1, len(racks)), "unit", "ukuran per lantai lihat keterangan switch; PDU, grounding, UPS")
     if cat == "all":
         fg = {}
         for f in floors:
