@@ -53,7 +53,7 @@ CATS = {
 }
 TYPE_NAME = {"outlet": "Stop kontak", "lan": "Port LAN", "switch": "Switch / rak", "modem": "Modem ISP",
              "router": "Wifi router / AP", "panel": "Panel MCB", "bullet": "Kamera bullet", "ptz": "Kamera PTZ",
-             "fisheye": "Kamera fisheye", "chair": "Kursi", "desk": "Meja"}
+             "fisheye": "Kamera fisheye", "chair": "Kursi", "desk": "Meja", "wardrobe": "Lemari", "fridge": "Kulkas"}
 CABLE = {"outlet": "NYM 3 x 2,5 mm²", "lan": "UTP Cat6", "router": "UTP Cat6 (PoE+)",
          "bullet": "UTP Cat6 (PoE)", "ptz": "UTP Cat6 (PoE+)", "fisheye": "UTP Cat6 (PoE)", "modem": "Patch Cat6 / fiber"}
 DATA_TYPES = {"lan", "router", "modem"} | CAM_TYPES
@@ -221,7 +221,7 @@ def compute_runs(floor, cat):
     used_cab = set()
     for d in devs:
         t = d["type"]
-        if t not in C["types"] or t in ("switch", "panel", "chair", "desk"):
+        if t not in C["types"] or t in ("switch", "panel", "chair", "desk", "wardrobe", "fridge"):
             continue
         cab = cidx.get(d["id"])
         if cab:  # jalur digambar manual di aplikasi: pakai panjang jalurnya
@@ -304,15 +304,17 @@ def draw_devices(fs, floor, cat):
     ppm = fs.ppm
     # furnitur ringan sebagai konteks
     for d in devs:
-        if d["type"] in ("chair", "desk"):
+        if d["type"] in ("chair", "desk", "wardrobe", "fridge"):
             w = float(d.get("widthCm") or 60) / 100 * ppm
             h = float(d.get("depthCm") or 60) / 100 * ppm
             a = math.radians(float(d.get("rotation") or 0))
             ca, sa = math.cos(a), math.sin(a)
             corners = [(-w / 2, -h / 2), (w / 2, -h / 2), (w / 2, h / 2), (-w / 2, h / 2)]
             pts = [(d["x"] + x * ca - y * sa, d["y"] + x * sa + y * ca) for x, y in corners]
-            col = (0.96, 0.79, 0.54) if d["type"] == "desk" else (0.35, 0.35, 0.35)
-            fs.poly(pts, col, 0.35 if d["type"] == "desk" else 0.3, stroke=(0.5, 0.4, 0.2), width=0.3)
+            FURN_FILL = {"desk": (0.96, 0.79, 0.54), "wardrobe": (0.6, 0.42, 0.2), "fridge": (0.65, 0.85, 0.9)}
+            FURN_STROKE_TEXT = {"desk": (0.45, 0.3, 0.05), "wardrobe": (0.3, 0.2, 0.05), "fridge": (0.05, 0.3, 0.35)}
+            col = FURN_FILL.get(d["type"], (0.35, 0.35, 0.35))
+            fs.poly(pts, col, 0.35 if d["type"] != "chair" else 0.3, stroke=(0.5, 0.4, 0.2), width=0.3)
             # label ukuran (cm) sinkron dengan skala denah
             c = fs.pt(d["x"], d["y"])
             wpt, hpt = w * fs.s, h * fs.s
@@ -323,7 +325,7 @@ def draw_devices(fs, floor, cat):
                 rot = 90 if hpt > wpt * 1.4 and tw > wpt - 2 else 0
                 half = (hpt if rot else wpt) / 2
                 pg.insert_textbox(pymupdf.Rect(c.x - half, c.y - size * 0.9, c.x + half, c.y + size * 0.9), txt,
-                                  fontsize=size, fontname="helv", color=(0.45, 0.3, 0.05) if d["type"] == "desk" else (0.25, 0.25, 0.25), align=1, rotate=rot)
+                                  fontsize=size, fontname="helv", color=FURN_STROKE_TEXT.get(d["type"], (0.25, 0.25, 0.25)), align=1, rotate=rot)
     # dinding / penghalang
     for wll in floor.get("walls") or []:
         pts = [(p["x"], p["y"]) for p in wll.get("points") or []]
@@ -512,7 +514,7 @@ def draw_floor_page(doc, project, floor, cat, idx):
         cnt = {}
         for d in floor.get("devices") or []:
             cnt[d["type"]] = cnt.get(d["type"], 0) + 1
-        order = ["outlet", "lan", "bullet", "ptz", "fisheye", "router", "modem", "switch", "panel", "desk", "chair"]
+        order = ["outlet", "lan", "bullet", "ptz", "fisheye", "router", "modem", "switch", "panel", "desk", "chair", "wardrobe", "fridge"]
         rows = [[TYPE_NAME[t], str(cnt[t]), ", ".join(d.get("label", "") for d in floor["devices"] if d["type"] == t)[:120],
                  f"{sum(r['total'] for r in runs.values() if r['type'] == t):.1f}" if t in CABLE else "-"]
                 for t in order if cnt.get(t)]
@@ -572,16 +574,17 @@ CONNECTIONS["all"] = CONNECTIONS["sk"][:1] + CONNECTIONS["lan"][:1] + CONNECTION
 
 
 def furniture_rows(floor):
-    """Rekap meja/kursi per ukuran: [jenis, ukuran, jumlah, luas m2]."""
+    """Rekap meja/kursi/lemari/kulkas per ukuran: [jenis, ukuran, jumlah, luas m2]."""
     groups = {}
     for d in floor.get("devices") or []:
-        if d["type"] not in ("desk", "chair"):
+        if d["type"] not in ("desk", "chair", "wardrobe", "fridge"):
             continue
         w, h = round(float(d.get("widthCm") or 0)), round(float(d.get("depthCm") or 0))
         key = (d["type"], w, h)
         groups[key] = groups.get(key, 0) + 1
     rows = []
-    for (t, w, h), n in sorted(groups.items(), key=lambda kv: (kv[0][0] != "desk", -kv[1])):
+    order_key = {"desk": 0, "chair": 1, "wardrobe": 2, "fridge": 3}
+    for (t, w, h), n in sorted(groups.items(), key=lambda kv: (order_key.get(kv[0][0], 9), -kv[1])):
         rows.append([TYPE_NAME[t], f"{w} x {h}", str(n), f"{w * h * n / 10000:.2f}"])
     return rows
 

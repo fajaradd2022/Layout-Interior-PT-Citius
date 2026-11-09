@@ -1,6 +1,8 @@
 import {
   Armchair,
   RectangleHorizontal,
+  DoorClosed,
+  Refrigerator,
   Plug,
   EthernetPort,
   Network,
@@ -41,6 +43,24 @@ export const DEVICE_META: Record<DeviceType, DeviceMeta> = {
     description: "Meja kerja, ukuran dapat diatur (cm)",
     icon: RectangleHorizontal,
     color: "#d97706",
+    group: "furniture",
+  },
+  wardrobe: {
+    type: "wardrobe",
+    label: "Lemari",
+    shortLabel: "Lemari",
+    description: "Lemari pakaian/penyimpanan, ukuran dapat diatur (cm)",
+    icon: DoorClosed,
+    color: "#78350f",
+    group: "furniture",
+  },
+  fridge: {
+    type: "fridge",
+    label: "Kulkas",
+    shortLabel: "Kulkas",
+    description: "Lemari es/kulkas, ukuran dapat diatur (cm)",
+    icon: Refrigerator,
+    color: "#0e7490",
     group: "furniture",
   },
   outlet: {
@@ -170,6 +190,8 @@ export const DEVICE_ORDER: DeviceType[] = [
   "fisheye",
   "chair",
   "desk",
+  "wardrobe",
+  "fridge",
   "outlet",
   "lan",
   "switch",
@@ -211,6 +233,26 @@ export function createDevice(
         widthCm: 120,
         depthCm: 60,
         color: "#f5c98a",
+      };
+    case "wardrobe":
+      return {
+        ...base,
+        type,
+        label: `Lemari ${index}`,
+        widthCm: 85,
+        depthCm: 40,
+        heightCm: 180,
+        color: "#78350f",
+      };
+    case "fridge":
+      return {
+        ...base,
+        type,
+        label: `Kulkas ${index}`,
+        widthCm: 47,
+        depthCm: 50,
+        heightCm: 100,
+        color: "#0e7490",
       };
     case "outlet":
       return { ...base, type, label: `SK-${index}`, gang: 2, heightCm: 30 };
@@ -262,6 +304,10 @@ export function describeDevice(d: Device): string {
       return `${d.widthCm} x ${d.depthCm} cm`;
     case "desk":
       return `${d.widthCm} x ${d.depthCm} cm`;
+    case "wardrobe":
+      return `${d.widthCm} x ${d.depthCm} x ${d.heightCm} cm`;
+    case "fridge":
+      return `${d.widthCm} x ${d.depthCm} x ${d.heightCm} cm`;
     case "outlet":
       return `${d.gang} gang, tinggi ${d.heightCm} cm`;
     case "lan":

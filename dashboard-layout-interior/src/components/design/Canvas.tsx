@@ -103,7 +103,7 @@ export function Canvas() {
       let best: Device | null = null;
       let bd = r;
       for (const d of floor.devices) {
-        if (d.type === "chair" || d.type === "desk") continue;
+        if (d.type === "chair" || d.type === "desk" || d.type === "wardrobe" || d.type === "fridge") continue;
         const dd = dist(p, d);
         if (dd < bd) {
           bd = dd;
@@ -469,7 +469,7 @@ export function Canvas() {
 
           {/* furnitur (kursi & meja) dalam ukuran nyata */}
           {floor.devices
-            .filter((d): d is Extract<Device, { type: "chair" | "desk" }> => d.type === "chair" || d.type === "desk")
+            .filter((d): d is Extract<Device, { type: "chair" | "desk" | "wardrobe" | "fridge" }> => d.type === "chair" || d.type === "desk" || d.type === "wardrobe" || d.type === "fridge")
             .map((d) => {
               const w = (d.widthCm / 100) * ppmEff;
               const h = (d.depthCm / 100) * ppmEff;
@@ -598,7 +598,7 @@ export function Canvas() {
 
         {/* perangkat (ikon ukuran tetap di layar) */}
         {floor.devices
-          .filter((d) => d.type !== "chair" && d.type !== "desk")
+          .filter((d) => d.type !== "chair" && d.type !== "desk" && d.type !== "wardrobe" && d.type !== "fridge")
           .map((d) => {
             const m = DEVICE_META[d.type];
             const Icon = m.icon;

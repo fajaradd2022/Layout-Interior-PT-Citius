@@ -3,6 +3,8 @@ export type Point = { x: number; y: number };
 export type DeviceType =
   | "chair"
   | "desk"
+  | "wardrobe"
+  | "fridge"
   | "outlet"
   | "lan"
   | "switch"
@@ -36,6 +38,22 @@ export interface DeskDevice extends DeviceBase {
   type: "desk";
   widthCm: number;
   depthCm: number;
+  color: string;
+}
+
+export interface WardrobeDevice extends DeviceBase {
+  type: "wardrobe";
+  widthCm: number;
+  depthCm: number;
+  heightCm: number;
+  color: string;
+}
+
+export interface FridgeDevice extends DeviceBase {
+  type: "fridge";
+  widthCm: number;
+  depthCm: number;
+  heightCm: number;
   color: string;
 }
 
@@ -97,6 +115,8 @@ export type Device =
   | CameraDevice
   | ChairDevice
   | DeskDevice
+  | WardrobeDevice
+  | FridgeDevice
   | OutletDevice
   | LanDevice
   | SwitchDevice

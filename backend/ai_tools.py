@@ -21,13 +21,15 @@ EXPORT_DIR = os.path.join(HERE, "data", "exports")
 ASSET_DIR = os.path.join(HERE, "assets")
 FALLBACK_PPM = 100.0
 
-DEVICE_TYPES = ["bullet", "ptz", "fisheye", "chair", "desk", "outlet", "lan", "switch", "modem", "router", "panel"]
+DEVICE_TYPES = ["bullet", "ptz", "fisheye", "chair", "desk", "wardrobe", "fridge", "outlet", "lan", "switch", "modem", "router", "panel"]
 TYPE_LABEL = {
     "bullet": "Kamera fixed/bullet", "ptz": "Kamera PTZ", "fisheye": "Kamera fisheye", "chair": "Kursi", "desk": "Meja",
+    "wardrobe": "Lemari", "fridge": "Kulkas",
     "outlet": "Stop kontak", "lan": "FacePlate LAN", "switch": "Switch", "modem": "Modem ISP", "router": "WiFi router / AP",
     "panel": "Panel MCB",
 }
-LABEL_PREFIX = {"bullet": "CAM", "ptz": "PTZ", "fisheye": "FE", "chair": "Kursi", "desk": "Meja", "outlet": "SK",
+LABEL_PREFIX = {"bullet": "CAM", "ptz": "PTZ", "fisheye": "FE", "chair": "Kursi", "desk": "Meja", "wardrobe": "Lemari",
+                "fridge": "Kulkas", "outlet": "SK",
                 "lan": "LAN", "switch": "SW", "modem": "Modem", "router": "AP", "panel": "MCB"}
 
 
@@ -40,11 +42,13 @@ def _uid():
 
 
 def _default_props(t, index):
-    sep = " " if t in ("chair", "desk", "modem") else "-"
+    sep = " " if t in ("chair", "desk", "wardrobe", "fridge", "modem") else "-"
     base = {"label": f"{LABEL_PREFIX[t]}{sep}{index}", "rotation": 0, "note": ""}
     extra = {
         "chair": {"widthCm": 60, "depthCm": 60, "color": "#374151"},
         "desk": {"widthCm": 120, "depthCm": 60, "color": "#f5c98a"},
+        "wardrobe": {"widthCm": 85, "depthCm": 40, "heightCm": 180, "color": "#78350f"},
+        "fridge": {"widthCm": 47, "depthCm": 50, "heightCm": 100, "color": "#0e7490"},
         "outlet": {"gang": 2, "heightCm": 30},
         "lan": {"ports": 1, "heightCm": 30, "cableId": ""},
         "switch": {"ports": 24, "poe": False, "rackMounted": True},

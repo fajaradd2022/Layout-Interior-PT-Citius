@@ -134,7 +134,7 @@ function CableProps() {
   const ppm = floor.pxPerMeter;
   const routePx = polylineLength(cable.points);
   const routeM = ppm ? routePx / ppm : null;
-  const devOpts = [{ value: "", label: "- tidak ada -" }, ...floor.devices.filter((d) => d.type !== "chair" && d.type !== "desk").map((d) => ({ value: d.id, label: `${d.label} (${DEVICE_META[d.type].shortLabel})` }))];
+  const devOpts = [{ value: "", label: "- tidak ada -" }, ...floor.devices.filter((d) => d.type !== "chair" && d.type !== "desk" && d.type !== "wardrobe" && d.type !== "fridge").map((d) => ({ value: d.id, label: `${d.label} (${DEVICE_META[d.type].shortLabel})` }))];
   const set = (patch: Parameters<typeof update>[1]) => update(cable.id, patch);
   return (
     <div className="grid gap-4 p-4">
@@ -389,6 +389,53 @@ function DeviceProps() {
                 { w: 160, d: 80, n: "160x80" },
               ].map((p) => (
                 <Button key={p.n} variant="outline" size="xs" onClick={() => set({ widthCm: p.w, depthCm: p.d })}>
+                  {p.n}
+                </Button>
+              ))}
+            </div>
+          )}
+          <Field label="Warna">
+            <div className="flex items-center gap-2">
+              <input
+                type="color"
+                value={device.color}
+                onChange={(e) => set({ color: e.target.value })}
+                className="h-8 w-12 cursor-pointer rounded border bg-background p-0.5"
+              />
+              <span className="font-mono text-xs text-muted-foreground">{device.color}</span>
+            </div>
+          </Field>
+        </>
+      )}
+
+      {(device.type === "wardrobe" || device.type === "fridge") && (
+        <>
+          <div className="grid grid-cols-2 gap-3">
+            <NumberField label="Lebar" value={device.widthCm} min={10} max={500} suffix="cm" onChange={(v) => set({ widthCm: v })} />
+            <NumberField label="Kedalaman" value={device.depthCm} min={10} max={500} suffix="cm" onChange={(v) => set({ depthCm: v })} />
+          </div>
+          <NumberField label="Tinggi" value={device.heightCm} min={10} max={300} suffix="cm" onChange={(v) => set({ heightCm: v })} />
+          {device.type === "wardrobe" && (
+            <div className="flex flex-wrap gap-1.5">
+              {[
+                { w: 85, d: 40, h: 180, n: "Lemari 85x40x180" },
+                { w: 100, d: 55, h: 200, n: "Lemari 100x55x200" },
+                { w: 120, d: 60, h: 200, n: "Lemari 120x60x200" },
+              ].map((p) => (
+                <Button key={p.n} variant="outline" size="xs" onClick={() => set({ widthCm: p.w, depthCm: p.d, heightCm: p.h })}>
+                  {p.n}
+                </Button>
+              ))}
+            </div>
+          )}
+          {device.type === "fridge" && (
+            <div className="flex flex-wrap gap-1.5">
+              {[
+                { w: 47, d: 50, h: 100, n: "Kulkas mini 47x50x100" },
+                { w: 60, d: 65, h: 170, n: "Kulkas 2 pintu 60x65x170" },
+                { w: 70, d: 70, h: 180, n: "Kulkas besar 70x70x180" },
+              ].map((p) => (
+                <Button key={p.n} variant="outline" size="xs" onClick={() => set({ widthCm: p.w, depthCm: p.d, heightCm: p.h })}>
                   {p.n}
                 </Button>
               ))}
